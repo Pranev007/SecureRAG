@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root { color-scheme: dark; }
+
+  html, body, #root { height: 100%; }
+
+  body {
+    @apply bg-ink-950 text-ink-100 font-sans antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(91, 141, 239, 0.10), transparent),
+      radial-gradient(ellipse 60% 40% at 90% 10%, rgba(181, 55, 154, 0.06), transparent);
+    background-attachment: fixed;
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-ink-700 rounded-full border-2 border-transparent bg-clip-padding; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-ink-600; }
+
+  :focus-visible { @apply outline-none ring-2 ring-accent/70 ring-offset-2 ring-offset-ink-950; }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-ink-800/80 bg-ink-900/70 backdrop-blur-sm;
+  }
+
+  .panel-header {
+    @apply flex items-center justify-between border-b border-ink-800/80 px-5 py-3.5;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2
+           text-sm font-medium transition-all duration-150
+           disabled:cursor-not-allowed disabled:opacity-45;
+  }
+  .btn-primary { @apply btn bg-accent text-white hover:bg-accent-dim active:scale-[0.98]; }
+  .btn-ghost   { @apply btn border border-ink-700 text-ink-200 hover:border-ink-600 hover:bg-ink-800/60; }
+  .btn-danger  { @apply btn border border-danger/40 text-danger hover:bg-danger/10; }
+  .btn-sm      { @apply px-2.5 py-1 text-xs; }
+
+  .input {
+    @apply w-full rounded-lg border border-ink-700 bg-ink-950/60 px-3.5 py-2.5
+           text-sm text-ink-100 placeholder-ink-500 transition-colors
+           focus:border-accent/60 focus:bg-ink-950;
+  }
+
+  .label { @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-ink-400; }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-md px-2 py-0.5
+           text-[11px] font-medium leading-5;
+  }
+  .badge-safe     { @apply badge bg-safe/12 text-safe; }
+  .badge-warn     { @apply badge bg-warn/12 text-warn; }
+  .badge-danger   { @apply badge bg-danger/12 text-danger; }
+  .badge-critical { @apply badge bg-critical/15 text-critical; }
+  .badge-neutral  { @apply badge bg-ink-800 text-ink-300; }
+  .badge-accent   { @apply badge bg-accent/12 text-accent-glow; }
+
+  .stat-value { @apply font-mono text-2xl font-semibold tabular-nums text-ink-100; }
+  .stat-label { @apply text-xs font-medium uppercase tracking-wide text-ink-400; }
+
+  .table-cell { @apply px-4 py-2.5 text-sm; }
+  .table-head {
+    @apply px-4 py-2.5 text-left text-[11px] font-semibold uppercase
+           tracking-wider text-ink-400;
+  }
+}
+
+/* The thin progress line under a bar chart / meter. */
+.meter { @apply h-1.5 w-full overflow-hidden rounded-full bg-ink-800; }
+.meter-fill { @apply h-full rounded-full transition-[width] duration-500 ease-out; }

@@ -1,0 +1,60 @@
+[project]
+name = "securerag-backend"
+version = "0.1.0"
+description = "SecureRAG - a security-first Retrieval-Augmented Generation service"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+markers = [
+    "unit: fast, isolated component tests",
+    "integration: tests spanning several components and the database",
+    "security: adversarial tests asserting guardrail behaviour",
+    "api: HTTP-level tests through the FastAPI test client",
+    "requires_postgres: needs a live PostgreSQL + pgvector instance",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:passlib.*",
+]
+
+[tool.ruff]
+line-length = 90
+target-version = "py311"
+exclude = ["alembic/versions", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "B008",   # FastAPI's Depends() in defaults is the documented idiom
+    "N818",   # exception names without an "Error" suffix are intentional here
+    "RUF012", # ClassVar annotations on mutable class attrs add noise in models
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+# Settings fields are intentionally UPPER_CASE to mirror env var names, and the
+# derived properties keep the same name so call sites read identically.
+"app/core/config.py" = ["N802"]
+# The cleaner's lookup table is *made of* ambiguous Unicode by design.
+"app/rag/ingestion/cleaner.py" = ["RUF001"]
+# Evasion tests deliberately contain homoglyphs and zero-width characters --
+# flagging them as "ambiguous" is flagging the thing under test.
+"tests/security/*" = ["RUF001", "E501"]
+# The docstring shows the full-width evasion it defends against.
+"app/security/input_validation.py" = ["RUF002"]
+# The docstring names the Cyrillic homoglyph it detects.
+"app/security/injection/heuristics.py" = ["RUF002"]
+# The quoted-span regex is built from real typographic quote characters.
+"app/security/context_scanner.py" = ["RUF001"]
+# The playground catalogue and eval dataset carry real evasion payloads --
+# full-width and zero-width characters are the attack, not a typo.
+"app/security/playground.py" = ["RUF001"]
+"app/evaluation/datasets.py" = ["RUF001"]
+# The report renderer builds Markdown table rows; wrapping them would make the
+# output template harder to read than the long lines are.
+"app/evaluation/report.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]

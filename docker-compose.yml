@@ -1,0 +1,98 @@
+# SecureRAG - full stack.
+#
+#   cp .env.example .env
+#   docker compose up --build
+#
+# Then: frontend http://localhost:5173 · API docs http://localhost:8000/docs
+#
+# Defaults are offline: no API key is needed and no data leaves the machine.
+# Set LLM_PROVIDER/EMBEDDING_PROVIDER in .env to use a real model.
+
+name: securerag
+
+services:
+  postgres:
+    # pgvector/pgvector ships the extension pre-built. Using the plain postgres
+    # image would require compiling pgvector at container start.
+    image: pgvector/pgvector:pg16
+    container_name: securerag-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-securerag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-securerag}
+      POSTGRES_DB: ${POSTGRES_DB:-securerag}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      # The backend waits on this, so migrations never race an unready database.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-securerag} -d ${POSTGRES_DB:-securerag}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: securerag-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-securerag}:${POSTGRES_PASSWORD:-securerag}@postgres:5432/${POSTGRES_DB:-securerag}
+      # A generated fallback would invalidate every token on restart, so the
+      # compose default is fixed -- and unsuitable for anything public.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production-please-really}
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      LLM_PROVIDER: ${LLM_PROVIDER:-echo}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hashing}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.openai.com/v1}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-384}
+      RETRIEVAL_MODE: ${RETRIEVAL_MODE:-hybrid}
+      PII_DETECTION_MODE: ${PII_DETECTION_MODE:-redact}
+      GROUNDING_MODE: ${GROUNDING_MODE:-block}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-20}
+      STORAGE_DIR: /data/storage
+    volumes:
+      - backend-storage:/data/storage
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Baked at build time: Vite inlines env vars into the bundle. The
+        # default is a relative path so nginx can proxy /api to the backend,
+        # which keeps the browser on one origin and avoids CORS entirely.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    container_name: securerag-frontend
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  backend-storage:

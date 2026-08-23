@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environment / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Data / runtime artifacts
+storage/
+uploads/
+*.db
+*.sqlite3
+backend/securerag.db
+
+# Evaluation output. The timestamped history is regenerated on every run and
+# does not belong in version control, but `latest.*` IS committed: the README
+# and docs link to it, and a reviewer should be able to read the measured
+# results without installing anything first.
+evaluation/reports/*
+!evaluation/reports/.gitkeep
+!evaluation/reports/latest.md
+!evaluation/reports/latest.json
+
+# Node
+node_modules/
+dist/
+.vite/
+*.local
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

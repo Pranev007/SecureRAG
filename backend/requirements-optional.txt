@@ -1,0 +1,11 @@
+# Optional, heavier capabilities. NOT required to run SecureRAG.
+# Each has a deterministic built-in fallback; see docs/security.md.
+
+# Higher-recall PII detection (PII_ENGINE=presidio).
+# Also requires: python -m spacy download en_core_web_lg
+presidio-analyzer==2.2.357
+presidio-anonymizer==2.2.357
+
+# Cross-encoder reranking (RERANKER=cross_encoder).
+# Pulls in torch (~2 GB). The heuristic reranker is the default.
+sentence-transformers==3.3.1

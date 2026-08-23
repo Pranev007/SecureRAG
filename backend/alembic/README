@@ -1,0 +1,15 @@
+Alembic migration environment for SecureRAG.
+
+The database URL is read from app.core.config (i.e. the DATABASE_URL
+environment variable), never from alembic.ini.
+
+Common commands (run from backend/):
+
+  alembic upgrade head            # apply all migrations
+  alembic downgrade -1            # roll back one migration
+  alembic revision -m "message"   # new empty migration
+  alembic current                 # show applied revision
+
+The initial migration is dialect-aware: on PostgreSQL it enables the pgvector
+extension and creates HNSW + GIN indexes; on SQLite those steps are skipped and
+embeddings are stored as JSON arrays.
