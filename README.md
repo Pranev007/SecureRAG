@@ -8,7 +8,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%20%2B%20pgvector-4169E1?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![Tests](https://img.shields.io/badge/tests-421%20passing-2ea56b)](#running-tests)
+[![Tests](https://img.shields.io/badge/tests-429%20passing-2ea56b)](#running-tests)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 </div>
@@ -348,7 +348,9 @@ instruction, so a tighter top-k is a smaller attack surface.
 ## Evaluation
 
 ```bash
-cd backend && python -m app.evaluation.run
+cd backend && python -m app.evaluation.run     # CLI
+# or, as an administrator:
+curl -X POST localhost:8000/api/v1/evaluation/run -H "Authorization: Bearer $TOKEN"      -H 'Content-Type: application/json' -d '{"kinds":["direct_injection","benign_control"]}'
 ```
 
 45 cases through the **real pipeline** — no evaluation-only code path. Two users
@@ -509,7 +511,7 @@ that matter most:
 
 ```bash
 cd backend
-pytest                      # 421 tests (PostgreSQL tests skip without a server)
+pytest                      # 429 tests (PostgreSQL tests skip without a server)
 pytest tests/security -v    # 171 adversarial tests
 pytest -m "security"        # by marker: unit · integration · security · api
 ruff check . && ruff format --check .
@@ -523,7 +525,7 @@ npm run lint && npm run typecheck
 | `unit` | 72 | Chunking · parsing · cleaning · prompts · citations · schemas |
 | `integration` | 80 | Ingestion · retrieval · authorisation · dashboard · **pgvector backends** |
 | `security` | 171 | Injection · evasion · indirect injection · PII · grounding · rate limits |
-| `api` | 98 | Every endpoint · auth · ownership · error envelope |
+| `api` | 106 | Every endpoint · auth · ownership · error envelope |
 
 Tests run against **SQLite via the real Alembic migrations** — no Postgres
 needed, and a broken migration fails the suite rather than diverging silently.
@@ -571,7 +573,9 @@ Verified end to end over HTTP — see the transcript in
 
 ## Screenshots
 
-> _Placeholders — add your own captures here._
+> _Placeholders — add your own captures here. See
+> [docs/images/README.md](docs/images/README.md) for what to capture and how to
+> generate interesting data first._
 
 | | |
 |---|---|

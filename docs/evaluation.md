@@ -12,6 +12,19 @@ python -m app.evaluation.run
 Writes `evaluation/reports/latest.md` (human) and `latest.json` (machine), plus
 a timestamped copy of each.
 
+The same suite is exposed as an **admin-only** endpoint, which returns the
+report inline rather than handing back a job id to poll:
+
+```
+POST /api/v1/evaluation/run     {"kinds": [...], "include_cases": false}
+GET  /api/v1/evaluation/dataset  # case counts, without running anything
+```
+
+It runs against a **throwaway database**. The suite creates its own users and
+ingests a deliberately poisoned corpus, so pointing it at the live database
+would inject evaluation fixtures into real data — there is a test asserting it
+does not.
+
 ---
 
 ## What is being measured, and by what
