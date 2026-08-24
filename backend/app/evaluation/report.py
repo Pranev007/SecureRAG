@@ -20,12 +20,26 @@ def _pct(value: float) -> str:
     return f"{value * 100:.1f}%"
 
 
+def _setting(value: object) -> str:
+    """Render one configuration value for the Markdown table.
+
+    Nested values (the NLI status block) are flattened to `k=v` pairs rather
+    than dumped as a Python repr, which renders as an unreadable wall of quotes
+    and braces in a table cell.
+    """
+    if isinstance(value, dict):
+        parts = [f"{k}={v}" for k, v in value.items() if v is not None]
+        return " · ".join(f"`{p}`" for p in parts) if parts else "—"
+    return f"`{value}`"
+
+
 def render_markdown(report: EvaluationReport) -> str:
     data = report.as_dict()
     config = data["configuration"]
     security = data["security"]
     ingestion = data["ingestion"]
     quality = data["quality"]
+    relevance = data["relevance"]
     retrieval = data["retrieval"]
     latency = data["latency"]
     totals = data["totals"]
@@ -48,7 +62,7 @@ def render_markdown(report: EvaluationReport) -> str:
     add("| Setting | Value |")
     add("|---|---|")
     for key, value in config.items():
-        add(f"| `{key}` | `{value}` |")
+        add(f"| `{key}` | {_setting(value)} |")
     add("")
     if config["llm_provider"] == "echo" or config["embedding_provider"] == "hashing":
         add(
@@ -60,6 +74,16 @@ def render_markdown(report: EvaluationReport) -> str:
             "deterministic server-side code. Retrieval and answer-quality "
             "metrics **are** affected and should be read as a floor, not as a "
             "measure of what the system does with a real model."
+        )
+        add("")
+
+    nli = config.get("nli") or {}
+    if nli.get("requested") in {"nli", "hybrid"} and not nli.get("active"):
+        add(
+            "> **NLI grounding was requested but did not run** "
+            f"(`{nli.get('unavailable_reason')}`), so every grounding number "
+            "below was produced by the lexical verifier. The `method` field on "
+            "each case records what actually scored it."
         )
         add("")
 
@@ -78,20 +102,57 @@ def render_markdown(report: EvaluationReport) -> str:
     )
     add(f"| False negative rate | {_pct(security['false_negative_rate'])} |")
     add(
+        f"| Benign refusal rate | {_pct(security['benign_refusal_rate'])} "
+        f"({security['benign_refusals']}/{security['benign_cases']}) |"
+    )
+    add(
         f"| Indirect injection detection | {_pct(ingestion['indirect_detection_rate'])} ({ingestion['poisoned_chunks_quarantined']}/{ingestion['poisoned_chunks_present']} chunks) |"
     )
     add(f"| Answer faithfulness (mean grounding) | {quality['faithfulness']:.3f} |")
+    add(
+        f"| Answer relevance | {relevance['answer_relevance']:.3f} "
+        f"({relevance['scored_answers']} answered, "
+        f"{relevance['refusals_excluded']} refusals excluded) |"
+    )
     add(f"| Citation accuracy | {_pct(quality['citation_accuracy'])} |")
     add(f"| Retrieval precision@{retrieval['k']} | {retrieval['precision_at_k']:.3f} |")
     add(f"| Retrieval recall@{retrieval['k']} | {retrieval['recall_at_k']:.3f} |")
     add(f"| Mean end-to-end latency | {latency['mean_ms']:.1f} ms |")
     add("")
 
+    add("## Answer relevance")
+    add("")
+    add(
+        "Faithfulness asks whether an answer is *supported* by the sources; "
+        "relevance asks whether it *addresses the question*. An answer can "
+        "score 1.0 on the first and 0.0 on the second, so both are reported. "
+        "Refusals are excluded rather than scored zero -- a refusal is often "
+        "the correct behaviour, and counting it as irrelevant would make this "
+        "metric move whenever the guardrails did."
+    )
+    add("")
+    add("| Metric | Value |")
+    add("|---|---|")
+    add(f"| Mean answer relevance | **{relevance['answer_relevance']:.3f}** |")
+    add(f"| Answers scored | {relevance['scored_answers']} |")
+    add(f"| Refusals excluded | {relevance['refusals_excluded']} |")
+    add(f"| Answers below threshold | {relevance['below_threshold']} |")
+    for component, value in relevance["components_mean"].items():
+        add(f"| &nbsp;&nbsp;component: {component} | {value:.3f} |")
+    add("")
+    if relevance.get("caveat"):
+        add(f"> {relevance['caveat']}")
+        add("")
+
     add("## Security classification")
     add("")
     add(
         "Positive = the system took a protective action. Detection and false "
-        "positives are reported together; neither means anything alone."
+        "positives are reported together; neither means anything alone. The "
+        "**benign refusal rate** sits beside them because a refusal is not a "
+        "block -- the case still passes and the confusion matrix stays clean, "
+        "so a guardrail that buys faithfulness by answering less would "
+        "otherwise look free."
     )
     add("")
     add("| | Predicted attack | Predicted benign |")
@@ -203,6 +264,7 @@ def print_summary(report: EvaluationReport) -> None:
     totals = data["totals"]
     ingestion = data["ingestion"]
     quality = data["quality"]
+    relevance = data["relevance"]
     retrieval = data["retrieval"]
     latency = data["latency"]
     config = data["configuration"]
@@ -234,6 +296,11 @@ def print_summary(report: EvaluationReport) -> None:
     )
     line("False negative rate", _pct(security["false_negative_rate"]))
     line(
+        "Benign refusal rate",
+        f"{_pct(security['benign_refusal_rate'])}  "
+        f"({security['benign_refusals']}/{security['benign_cases']})",
+    )
+    line(
         "Indirect injection detection",
         f"{_pct(ingestion['indirect_detection_rate'])}  "
         f"({ingestion['poisoned_chunks_quarantined']}/"
@@ -241,7 +308,16 @@ def print_summary(report: EvaluationReport) -> None:
     )
     line("Quarantine precision", _pct(ingestion["quarantine_precision"]))
     print("-" * 66)
-    line("Faithfulness (mean grounding)", f"{quality['faithfulness']:.3f}")
+    line(
+        "Faithfulness (mean grounding)",
+        f"{quality['faithfulness']:.3f}  [{config.get('grounding_method', 'lexical')}]",
+    )
+    line(
+        "Answer relevance",
+        f"{relevance['answer_relevance']:.3f}  "
+        f"({relevance['scored_answers']} answered, "
+        f"{relevance['refusals_excluded']} refused)",
+    )
     line("Citation accuracy", _pct(quality["citation_accuracy"]))
     line("Answer correctness", _pct(quality["answer_correctness"]))
     line(

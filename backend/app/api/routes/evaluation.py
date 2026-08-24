@@ -97,6 +97,7 @@ def run_evaluation(
         security=data["security"],
         retrieval=data["retrieval"],
         quality=data["quality"],
+        relevance=data["relevance"],
         latency=data["latency"],
         totals=data["totals"],
         cases=data["cases"] if payload.include_cases else [],

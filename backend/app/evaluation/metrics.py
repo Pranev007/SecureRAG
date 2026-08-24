@@ -8,9 +8,14 @@ The definitions that matter most, stated precisely:
 * **Attack detection rate** = blocked attacks / total attacks.  This is
   *recall on the attack class*, and it is meaningless on its own -- a detector
   that blocks everything scores 1.0.
-* **False positive rate** = benign inputs blocked or flagged / total benign
-  inputs.  Reported beside detection, always.  A guardrail is characterised by
-  the *pair*, never by detection alone.
+* **False positive rate** = benign inputs blocked / total benign inputs.
+  Reported beside detection, always.  A guardrail is characterised by the
+  *pair*, never by detection alone.
+* **Benign refusal rate** = benign inputs that produced no answer / total
+  benign inputs.  Distinct from the false-positive rate because a refusal is
+  not a block: the case still passes, so this cost does not appear in the pass
+  rate.  Reported because a guardrail can buy faithfulness by answering less,
+  and that trade has to be visible.
 * **False negative rate** = 1 - detection rate.  Reported explicitly rather
   than left for the reader to subtract, because it is the number that gets
   quietly omitted.
@@ -19,6 +24,10 @@ The definitions that matter most, stated precisely:
   documents were reached at all.
 * **Faithfulness** = mean grounding score over answered cases.
 * **Citation accuracy** = verified citations / emitted citations.
+* **Answer relevance** = mean relevance score over *answered* cases only.
+  Refusals are excluded rather than scored zero -- see
+  ``app.evaluation.relevance`` for why mixing them in would make the metric
+  track guardrail behaviour instead of answer quality.
 """
 
 from __future__ import annotations
@@ -42,6 +51,12 @@ class ConfusionMatrix:
     false_negatives: int = 0
     false_positives: int = 0
     true_negatives: int = 0
+    # Benign inputs the system answered nothing for. Counted separately from
+    # false positives because a refusal is not a block: the judge accepts it
+    # for a benign case, and it is therefore invisible in the pass rate. It is
+    # still a cost the reader has to see -- a guardrail that refuses half the
+    # benign traffic scores a perfect confusion matrix.
+    benign_refusals: int = 0
 
     @property
     def attacks(self) -> int:
@@ -70,6 +85,11 @@ class ConfusionMatrix:
         return _safe_ratio(self.true_positives, predicted_positive)
 
     @property
+    def benign_refusal_rate(self) -> float:
+        """Benign inputs that produced no answer, over all benign inputs."""
+        return _safe_ratio(self.benign_refusals, self.benign)
+
+    @property
     def f1(self) -> float:
         precision, recall = self.precision, self.detection_rate
         if precision + recall == 0:
@@ -87,6 +107,8 @@ class ConfusionMatrix:
             "detection_rate": self.detection_rate,
             "false_negative_rate": self.false_negative_rate,
             "false_positive_rate": self.false_positive_rate,
+            "benign_refusals": self.benign_refusals,
+            "benign_refusal_rate": self.benign_refusal_rate,
             "precision": self.precision,
             "f1": self.f1,
         }
@@ -167,6 +189,55 @@ class LatencyMetrics:
                 stage: round(mean(values), 2)
                 for stage, values in sorted(self.stages.items())
             },
+        }
+
+
+@dataclass
+class AnswerRelevanceMetrics:
+    """Does the answer address the question asked?
+
+    Kept separate from :class:`QualityMetrics` because the denominators differ:
+    faithfulness is defined over every answered case, while relevance is only
+    defined where an answer was actually attempted. Folding them together
+    would silently change what "mean" meant depending on how many cases the
+    guardrails refused.
+    """
+
+    scores: list[float] = field(default_factory=list)
+    semantic: list[float] = field(default_factory=list)
+    coverage: list[float] = field(default_factory=list)
+    type_match: list[float] = field(default_factory=list)
+    refusals_excluded: int = 0
+    caveat: str | None = None
+
+    def record(self, result) -> None:
+        """Record one :class:`~app.evaluation.relevance.RelevanceScore`."""
+        if result.is_refusal:
+            self.refusals_excluded += 1
+            return
+        self.scores.append(result.score)
+        self.semantic.append(result.semantic)
+        self.coverage.append(result.coverage)
+        self.type_match.append(result.type_match)
+
+    @property
+    def below_threshold(self) -> int:
+        from app.core.config import settings
+
+        return sum(1 for s in self.scores if s < settings.ANSWER_RELEVANCE_MIN_SCORE)
+
+    def as_dict(self) -> dict:
+        return {
+            "scored_answers": len(self.scores),
+            "refusals_excluded": self.refusals_excluded,
+            "answer_relevance": round(mean(self.scores), 4) if self.scores else 0.0,
+            "below_threshold": self.below_threshold,
+            "components_mean": {
+                "semantic": round(mean(self.semantic), 4) if self.semantic else 0.0,
+                "coverage": round(mean(self.coverage), 4) if self.coverage else 0.0,
+                "type_match": round(mean(self.type_match), 4) if self.type_match else 0.0,
+            },
+            "caveat": self.caveat,
         }
 
 

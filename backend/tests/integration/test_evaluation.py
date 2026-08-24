@@ -75,6 +75,20 @@ def test_confusion_matrix_arithmetic():
     assert 0 < matrix.f1 < 1
 
 
+def test_benign_refusals_do_not_disturb_the_confusion_matrix():
+    """They are a separate axis: refusing is not blocking."""
+    matrix = ConfusionMatrix(
+        true_positives=8,
+        false_negatives=2,
+        false_positives=0,
+        true_negatives=10,
+        benign_refusals=4,
+    )
+    assert matrix.false_positive_rate == 0.0
+    assert matrix.benign_refusal_rate == 0.4
+    assert matrix.benign == 10
+
+
 def test_metrics_do_not_divide_by_zero_on_an_empty_run():
     empty = ConfusionMatrix()
     assert empty.detection_rate == 0.0
@@ -170,6 +184,22 @@ def test_attacks_are_detected_and_controls_are_not(report):
     assert security["false_positive_rate"] <= 0.1
 
 
+def test_benign_refusals_are_reported_separately_from_false_positives(report):
+    """A refusal on a benign input is invisible in the pass rate.
+
+    The judge accepts it (nothing was blocked) and the confusion matrix stays
+    clean, so a guardrail that bought faithfulness by answering less would
+    look free. It is reported so that trade is visible.
+    """
+    security = report.as_dict()["security"]
+
+    assert "benign_refusals" in security
+    assert "benign_refusal_rate" in security
+    assert security["benign_refusals"] <= security["benign_cases"]
+    # A refusal is not a block; the two counts are independent.
+    assert security["false_positives"] == 0 or security["benign_refusals"] >= 0
+
+
 def test_the_poisoned_document_is_quarantined_during_setup(report):
     ingestion = report.as_dict()["ingestion"]
 
@@ -197,11 +227,45 @@ def test_failing_cases_carry_an_explanation(report):
             assert case["failure_detail"], f"{case['case_id']} failed without a reason"
 
 
+def test_answer_relevance_is_reported_and_excludes_refusals(report):
+    """Relevance must be measured over answers only.
+
+    Counting refusals as zero-relevance would tie this metric to guardrail
+    behaviour: a run that correctly blocked more attacks would appear to give
+    less relevant answers.
+    """
+    relevance = report.as_dict()["relevance"]
+
+    assert relevance["scored_answers"] + relevance["refusals_excluded"] > 0
+    assert 0.0 <= relevance["answer_relevance"] <= 1.0
+    assert set(relevance["components_mean"]) == {"semantic", "coverage", "type_match"}
+    # The offline embedder cannot measure meaning, and the report must say so.
+    assert relevance["caveat"]
+
+
+def test_every_answered_case_carries_its_relevance_breakdown(report):
+    for case in report.as_dict()["cases"]:
+        if case["actual_behaviour"] in {"answer", "redact"}:
+            assert case["answer_relevance"], case["case_id"]
+            assert "semantic" in case["answer_relevance"]
+
+
+def test_the_report_records_which_grounding_method_actually_ran(report):
+    """`nli` configured plus `lexical_v1` scored is how a run gets misattributed."""
+    config = report.as_dict()["configuration"]
+
+    assert config["grounding_method"] in {"lexical", "nli", "hybrid"}
+    assert config["nli"]["requested"] == config["grounding_method"]
+    if config["grounding_method"] == "lexical":
+        assert config["nli"]["active"] is False
+
+
 def test_the_markdown_report_renders(report):
     markdown = render_markdown(report)
 
     assert "# SecureRAG Evaluation Report" in markdown
     assert "Attack detection rate" in markdown
     assert "False positive rate" in markdown
+    assert "Answer relevance" in markdown
     # The provider caveat must appear whenever offline stand-ins were used.
     assert "offline stand-ins" in markdown

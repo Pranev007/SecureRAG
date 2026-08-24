@@ -55,6 +55,7 @@ class EvaluationRunResponse(BaseModel):
     security: dict[str, Any]
     retrieval: dict[str, Any]
     quality: dict[str, Any]
+    relevance: dict[str, Any]
     latency: dict[str, Any]
     totals: dict[str, Any]
     cases: list[dict[str, Any]] = Field(default_factory=list)

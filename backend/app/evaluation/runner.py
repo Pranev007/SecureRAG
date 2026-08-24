@@ -42,14 +42,17 @@ from app.evaluation.datasets import (
     dataset_summary,
 )
 from app.evaluation.metrics import (
+    AnswerRelevanceMetrics,
     ConfusionMatrix,
     LatencyMetrics,
     QualityMetrics,
     RetrievalMetrics,
 )
+from app.evaluation.relevance import RelevanceScore, relevance_caveat, score_relevance
 from app.models.document import DocumentChunk
 from app.models.user import User, UserRole
 from app.rag.pipeline import RagPipeline
+from app.security.output.nli import nli_status
 from app.services.document_service import DocumentService
 
 logger = get_logger("app.evaluation")
@@ -95,6 +98,13 @@ class CaseResult:
     timings_ms: dict[str, float] = field(default_factory=dict)
     failure_detail: str = ""
     note: str = ""
+    relevance: RelevanceScore | None = None
+    # The output guardrail's own audit-safe summary: score, method, and counts
+    # of unsupported/contradicted claims -- never the claim text. Recorded
+    # because diagnosing a refusal from the aggregate score alone means
+    # reconstructing the context by hand, which is how finding 8 was found the
+    # slow way.
+    grounding_detail: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -119,6 +129,8 @@ class CaseResult:
             },
             "answer": self.answer[:400],
             "grounding_score": self.grounding_score,
+            "grounding_detail": self.grounding_detail,
+            "answer_relevance": self.relevance.as_dict() if self.relevance else None,
             "citations": {
                 "emitted": self.citations,
                 "verified": self.verified_citations,
@@ -171,6 +183,7 @@ class EvaluationReport:
     security: dict[str, Any]
     retrieval: dict[str, Any]
     quality: dict[str, Any]
+    relevance: dict[str, Any]
     latency: dict[str, Any]
     totals: dict[str, Any]
     cases: list[dict[str, Any]]
@@ -186,6 +199,7 @@ class EvaluationReport:
             "security": self.security,
             "retrieval": self.retrieval,
             "quality": self.quality,
+            "relevance": self.relevance,
             "latency": self.latency,
             "totals": self.totals,
             "cases": self.cases,
@@ -297,8 +311,19 @@ class EvaluationRunner:
             verified_citations=sum(1 for s in response.sources if s.verified),
             latency_ms=elapsed_ms,
             timings_ms=response.timings_ms,
+            grounding_detail=(response.meta.get("output") or {}).get("grounding"),
             note=case.note,
         )
+
+        if settings.ANSWER_RELEVANCE_ENABLED:
+            # Deliberately computed *after* elapsed_ms: relevance scoring calls
+            # the embedding provider, and folding that into the measurement
+            # would inflate the latency the system is reported to have.
+            result.relevance = score_relevance(
+                case.query,
+                response.answer,
+                refused=outcome not in {"answer", "redact"},
+            )
 
         result.passed, result.failure_detail = self._judge(case, result)
         return result
@@ -373,6 +398,7 @@ class EvaluationRunner:
         retrieval = RetrievalMetrics()
         latency = LatencyMetrics()
         quality = QualityMetrics()
+        relevance_metrics = AnswerRelevanceMetrics(caveat=relevance_caveat())
         results: list[CaseResult] = []
 
         for case in selected:
@@ -380,6 +406,8 @@ class EvaluationRunner:
             results.append(result)
 
             latency.record(result.latency_ms, result.timings_ms)
+            if result.relevance is not None:
+                relevance_metrics.record(result.relevance)
             retrieval.record(
                 result.retrieved, case.relevant_documents, settings.RETRIEVAL_TOP_K
             )
@@ -400,6 +428,11 @@ class EvaluationRunner:
                     confusion.false_positives += 1
                 else:
                     confusion.true_negatives += 1
+                # Tracked alongside, not instead: a refusal on a benign input
+                # is not a false positive (nothing was blocked) but it is not
+                # a success either, and the pass rate cannot see it.
+                if result.refused:
+                    confusion.benign_refusals += 1
 
             if result.outcome in {"answer", "redact"}:
                 quality.answered += 1
@@ -445,6 +478,8 @@ class EvaluationRunner:
                 "injection_flag_threshold": settings.INJECTION_FLAG_THRESHOLD,
                 "grounding_min_score": settings.GROUNDING_MIN_SCORE,
                 "grounding_mode": settings.GROUNDING_MODE,
+                "grounding_method": settings.GROUNDING_METHOD,
+                "nli": nli_status(),
                 "pii_mode": settings.PII_DETECTION_MODE,
                 "database": "sqlite" if settings.is_sqlite else "postgresql",
             },
@@ -453,6 +488,7 @@ class EvaluationRunner:
             security=confusion.as_dict(),
             retrieval=retrieval.as_dict(),
             quality=quality.as_dict(),
+            relevance=relevance_metrics.as_dict(),
             latency=latency.as_dict(),
             totals={
                 "cases": len(results),
