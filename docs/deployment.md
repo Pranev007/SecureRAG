@@ -51,9 +51,42 @@ across the offline stub and a real model. So on the default `echo` provider:
 | Document ingest and quarantine | |
 
 A deployment on `echo` is an honest demo of the thing this project is actually
-about. Add a key later if you want generated prose — any OpenAI-compatible
-endpoint works (`LLM_PROVIDER=openai` plus `LLM_BASE_URL`), including free
-tiers such as Groq.
+about — and `LLM_PROVIDER=echo` is the one-variable way back to it at any time.
+
+### Adding a real model
+
+[`render.yaml`](../render.yaml) points at **Groq** by default: its free tier is
+enough for a public demo, and being hosted it is faster than local inference
+rather than slower. One provider class covers OpenAI, Groq, Together,
+OpenRouter, vLLM and LM Studio, so changing vendor is a base URL and a model
+name.
+
+The key is the only part not in the blueprint. Set it in the Render dashboard:
+
+```
+LLM_API_KEY = <your key>
+```
+
+`sync: false` on that variable means the blueprint neither carries the value
+nor overwrites what you set, so it stays out of git permanently.
+
+> **Without a key the chat returns a clean `502` — "The language model service
+> is currently unavailable."** Not a crash, and no internal detail leaks. The
+> Playground, Dashboard, ingestion and every guardrail keep working, because
+> none of them call a model.
+
+**Set the key before the blueprint syncs** and there is no gap at all: the
+variable sits unused while the provider is still `echo`, then takes effect the
+moment it flips.
+
+Two things not to change casually:
+
+- **`LLM_MODEL`** — Groq retires model names, and a stale one is a 404 on every
+  request. Check [the model list](https://console.groq.com/docs/models) first.
+- **`EMBEDDING_PROVIDER`** — the `vector(n)` column is sized from
+  `EMBEDDING_DIMENSIONS` at migration time, so switching embedders needs a
+  fresh database and a re-upload of every document. `/health/ready` reports the
+  mismatch if the two disagree. Swapping the *LLM* has no such constraint.
 
 ---
 

@@ -51,13 +51,38 @@ services:
       - key: CORS_ORIGINS
         sync: false
 
-      # Offline defaults. The security layers are deterministic server-side
-      # code and behave identically with or without a model -- measured across
-      # four provider configurations in docs/evaluation.md -- so the Playground
-      # and Dashboard are fully functional like this. Set LLM_PROVIDER=openai
-      # with a key (OpenAI, Groq, Together, OpenRouter) for real answers.
+      # Generation runs through a hosted OpenAI-compatible endpoint. One
+      # provider class covers OpenAI, Groq, Together, OpenRouter, vLLM and
+      # LM Studio, so switching vendor is a base URL and a model name.
+      #
+      # Groq is the default here because its free tier is enough for a public
+      # demo and it is faster than local inference, not slower.
+      #
+      # WITHOUT A KEY THE CHAT RETURNS A CLEAN 502 ("The language model service
+      # is currently unavailable") -- not a crash, and nothing internal leaks.
+      # To run with no credentials at all, set LLM_PROVIDER=echo: a
+      # deterministic extractive responder, not a language model. The security
+      # layers behave identically either way -- measured across four provider
+      # configurations in docs/evaluation.md -- so the Playground and Dashboard
+      # are fully functional without a key.
       - key: LLM_PROVIDER
-        value: echo
+        value: openai
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      # Check https://console.groq.com/docs/models before changing this --
+      # Groq retires model names, and a stale one is a 404 on every request.
+      - key: LLM_MODEL
+        value: llama-3.3-70b-versatile
+      # Never in git. Set this in the Render dashboard; `sync: false` means the
+      # blueprint neither carries the value nor overwrites what you set.
+      - key: LLM_API_KEY
+        sync: false
+
+      # Embeddings stay offline deliberately. The vector column is sized from
+      # EMBEDDING_DIMENSIONS at migration time, so changing the embedder means
+      # a fresh database and re-uploading every document -- a much bigger move
+      # than swapping the LLM, and /health/ready reports the mismatch if the
+      # two ever disagree.
       - key: EMBEDDING_PROVIDER
         value: hashing
       - key: EMBEDDING_DIMENSIONS
