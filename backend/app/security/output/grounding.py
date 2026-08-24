@@ -32,9 +32,9 @@ Hedging and refusal sentences are exempt: "I could not find this in your
 documents" is *correct* behaviour and must not be scored as an unsupported
 claim.
 
-HONEST LIMITATIONS
-------------------
-This is a lexical entailment proxy, not an NLI model.  It will:
+HONEST LIMITATIONS OF THE LEXICAL SIGNAL
+----------------------------------------
+Lexical scoring is an entailment *proxy*.  On its own it will:
 
 * **miss** a fluent contradiction that reuses the source's vocabulary
   ("employees may *not* carry leave forward" scores well against a chunk
@@ -42,10 +42,23 @@ This is a lexical entailment proxy, not an NLI model.  It will:
 * **penalise** a correct answer that paraphrases heavily in different words.
 
 The negation check below covers the most common instance of the first failure.
-A cross-encoder NLI model would be materially better and is the documented
-upgrade path.  The score is a filter against *obvious* fabrication -- which is
-the bulk of real hallucination -- not a proof of correctness, and the README
-says so.
+
+NLI
+---
+Setting ``GROUNDING_METHOD`` to ``nli`` or ``hybrid`` adds a cross-encoder
+entailment model (see ``nli.py``) that addresses both of those directly.  It is
+opt-in because it pulls in torch, and it does **not** replace the lexical
+signal: the cross-encoder is good on numbers but not dependable, and a
+confidently-entailed wrong figure is the most damaging hallucination in a
+document-QA system.  ``combine_signals`` below therefore keeps the lexical
+numeric check authoritative over numbers and lets NLI decide paraphrase and
+polarity.  Neither signal is trusted outside the region where it has been shown
+to work.
+
+The score is a filter against fabrication, not a proof of correctness, in every
+mode.  The README says so, and ``method`` in the report always records which
+combination actually ran -- including a silent degradation to lexical when the
+NLI dependency is absent.
 """
 
 from __future__ import annotations
@@ -53,9 +66,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from app.core.config import settings
+from app.core.logging import get_logger
 from app.rag.ingestion.chunker import split_sentences
 from app.rag.retrieval.keyword import tokenize
 from app.rag.retrieval.types import ScoredChunk
+from app.security.output.nli import EntailmentResult, get_nli_verifier
+
+logger = get_logger("app.security.output.grounding")
 
 _NUMBER = re.compile(r"\b\d+(?:[.,]\d+)?%?\b")
 # Inline citation markers. These must be removed before scoring: "[1]" is
@@ -99,6 +117,21 @@ W_NGRAM = 0.25
 # A claim below this is treated as unsupported when computing the answer score.
 CLAIM_SUPPORT_FLOOR = 0.45
 
+# A claim citing a number its context does not contain must never count as
+# supported, whatever the other signals say.
+#
+# Derived from the floor rather than set independently, because when the two
+# *were* independent (ceiling 0.50, floor 0.45) the "gate" did not gate: a
+# confident NLI entailment of a fabricated figure was capped at 0.50, which is
+# still above the floor, so the claim passed. Lexical scoring alone had given
+# the same claim 0.42 and blocked it -- adding the better model made that case
+# strictly worse. Measured, not theorised: see
+# tests/security/test_nli_numeric_behaviour.py, which fails if this inequality
+# is ever inverted again.
+NUMERIC_MISMATCH_CEILING = CLAIM_SUPPORT_FLOOR - 0.05
+# Multiplier applied when a claim is judged to contradict its source.
+CONTRADICTION_PENALTY = 0.4
+
 
 @dataclass
 class ClaimScore:
@@ -109,6 +142,10 @@ class ClaimScore:
     ngram: float
     contradicts: bool = False
     is_hedge: bool = False
+    # Populated only when an NLI verifier ran for this claim.
+    entailment: float | None = None
+    nli_contradiction: float | None = None
+    lexical_score: float | None = None
 
     @property
     def supported(self) -> bool:
@@ -187,19 +224,73 @@ def score_claim(sentence: str, context: str, context_tokens: set[str]) -> ClaimS
     contradicts = False
     if overlap > 0.6 and not _polarity_is_corroborated(sentence, context):
         contradicts = True
-        score *= 0.4
+        score *= CONTRADICTION_PENALTY
 
     if numeric_mismatch:
-        score = min(score, 0.5)
+        score = min(score, NUMERIC_MISMATCH_CEILING)
 
+    final = round(min(max(score, 0.0), 1.0), 4)
     return ClaimScore(
         sentence=sentence,
-        score=round(min(max(score, 0.0), 1.0), 4),
+        score=final,
         overlap=round(overlap, 4),
         numeric=round(numeric, 4),
         ngram=round(ngram, 4),
         contradicts=contradicts,
+        lexical_score=final,
     )
+
+
+def combine_signals(claim: ClaimScore, entailment: EntailmentResult) -> ClaimScore:
+    """Fold an NLI verdict into a lexically-scored claim.
+
+    The combination is not a weighted average, because the two signals are not
+    interchangeable estimates of the same quantity -- they are reliable on
+    disjoint things.  Each is therefore allowed to decide only what it is good
+    at:
+
+    * **Numbers stay lexical.**  A claim asserting a figure absent from the
+      context is capped below the support floor, whatever the model says.  The
+      cross-encoder is mostly right about numbers -- 12 of 13 fabricated
+      figures caught in ``tests/security/test_nli_numeric_behaviour.py`` -- but
+      the one it missed, it entailed at p=0.94, and a confidently-served wrong
+      figure is the worst hallucination class in document QA.  The check is
+      free on the twelve it already catches, so it costs almost nothing to keep
+      and covers the case where the model is confidently wrong.
+    * **Support may come from either signal** in ``hybrid``.  Lexical overlap
+      proves the answer reuses the source; entailment proves it follows from
+      the source.  Either is sufficient evidence of grounding, so taking the
+      maximum raises recall on heavily-paraphrased answers without weakening
+      the numeric gate.
+    * **Contradiction is a veto from either side.**  The lexical polarity check
+      and the model's contradiction probability catch different phrasings, and
+      a claim flagged by either is penalised.
+    """
+    if claim.is_hedge:
+        return claim
+
+    contradicted = claim.contradicts or (
+        entailment.contradiction >= settings.NLI_CONTRADICTION_THRESHOLD
+    )
+
+    lexical = claim.lexical_score if claim.lexical_score is not None else claim.score
+    if settings.GROUNDING_METHOD == "nli":
+        score = entailment.entailment
+    else:  # hybrid
+        score = max(entailment.entailment, lexical)
+
+    # The lexical numeric gate outranks the model in both modes.
+    if claim.numeric < 1.0:
+        score = min(score, NUMERIC_MISMATCH_CEILING)
+
+    if contradicted:
+        score *= CONTRADICTION_PENALTY
+
+    claim.score = round(min(max(score, 0.0), 1.0), 4)
+    claim.contradicts = contradicted
+    claim.entailment = round(entailment.entailment, 4)
+    claim.nli_contradiction = round(entailment.contradiction, 4)
+    return claim
 
 
 def _clauses(context: str) -> list[str]:
@@ -300,13 +391,39 @@ def verify_grounding(answer: str, chunks: list[ScoredChunk]) -> GroundingReport:
 
     factual = [c for c in claims if not c.is_hedge]
     if not factual:
-        # Pure hedge / refusal: correctly grounded by construction.
+        # Pure hedge / refusal: correctly grounded by construction. Returned
+        # before the NLI stage so a refusal never pays for a model call.
         return GroundingReport(
             score=1.0,
             claims=claims,
+            method=_method_label(nli_ran=False),
             context_chars=len(context),
             notes=["answer asserts no factual claims"],
         )
+
+    method_notes: list[str] = []
+    nli_ran = False
+    if settings.GROUNDING_METHOD != "lexical":
+        verifier = get_nli_verifier()
+        if verifier is None:
+            # Degradation is recorded, not hidden: a report claiming NLI
+            # grounding while running lexical scoring would misattribute every
+            # number in it.
+            method_notes.append("nli requested but unavailable; used lexical")
+        else:
+            try:
+                verdicts = verifier.verify_claims([c.sentence for c in factual], context)
+                for claim in factual:
+                    verdict = verdicts.get(claim.sentence)
+                    if verdict is not None:
+                        combine_signals(claim, verdict)
+                nli_ran = True
+            except Exception as exc:
+                # Inference failure must not fail the request open *or* closed
+                # on a technicality -- the lexical score is still valid, so it
+                # stands, and the substitution is disclosed.
+                logger.warning("nli_scoring_failed", extra={"error": type(exc).__name__})
+                method_notes.append("nli error; fell back to lexical")
 
     # Mean over factual claims, then penalised by the share that failed.
     # A single fabricated sentence in an otherwise accurate answer is exactly
@@ -316,7 +433,7 @@ def verify_grounding(answer: str, chunks: list[ScoredChunk]) -> GroundingReport:
     penalty = 1.0 - 0.5 * (len(unsupported) / len(factual))
     score = mean_score * penalty
 
-    notes: list[str] = []
+    notes: list[str] = list(method_notes)
     if any(c.contradicts for c in factual):
         notes.append("possible contradiction of the source")
     if len(factual) == 1 and factual[0].score < CLAIM_SUPPORT_FLOOR:
@@ -327,6 +444,19 @@ def verify_grounding(answer: str, chunks: list[ScoredChunk]) -> GroundingReport:
         claims=claims,
         unsupported_claims=[c.sentence for c in unsupported],
         contradicted_claims=[c.sentence for c in factual if c.contradicts],
+        method=_method_label(nli_ran=nli_ran),
         context_chars=len(context),
         notes=notes,
     )
+
+
+def _method_label(*, nli_ran: bool) -> str:
+    """What actually scored this answer, not what was configured.
+
+    The distinction matters for the evaluation report: ``nli`` in the config
+    and ``lexical_v1`` in the method field is exactly how a run gets attributed
+    to a model that never loaded.
+    """
+    if not nli_ran:
+        return "lexical_v1"
+    return "nli_v1" if settings.GROUNDING_METHOD == "nli" else "hybrid_v1"

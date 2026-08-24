@@ -14,6 +14,8 @@ markers = [
     "security: adversarial tests asserting guardrail behaviour",
     "api: HTTP-level tests through the FastAPI test client",
     "requires_postgres: needs a live PostgreSQL + pgvector instance",
+    "requires_nli: needs sentence-transformers and the NLI checkpoint",
+    "requires_ollama: needs a running Ollama server with the configured model",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:passlib.*",

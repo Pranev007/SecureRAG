@@ -167,6 +167,23 @@ class Settings(BaseSettings):
     GROUNDING_ENABLED: bool = True
     GROUNDING_MIN_SCORE: float = 0.45
     GROUNDING_MODE: Literal["warn", "block"] = "block"
+    # How a claim is checked against the retrieved context.
+    #   "lexical" -- overlap / numeric / n-gram scoring. No dependencies.
+    #   "nli"     -- cross-encoder entailment, with the lexical numeric gate
+    #                retained because NLI models do not judge numbers reliably.
+    #   "hybrid"  -- both, combined so each vetoes only where it is strong.
+    # "nli" and "hybrid" need sentence-transformers; when it is missing the
+    # verifier degrades to lexical and says so in the report's `method` field.
+    GROUNDING_METHOD: Literal["lexical", "nli", "hybrid"] = "lexical"
+    NLI_MODEL: str = "cross-encoder/nli-deberta-v3-base"
+    NLI_MAX_LENGTH: int = 384
+    NLI_BATCH_SIZE: int = 16
+    # Premises scored per claim after the lexical shortlist. Higher is more
+    # thorough and linearly more expensive; 4 covers a claim supported by a
+    # sentence pair without making a CPU run unaffordable.
+    NLI_TOP_PREMISES: int = 4
+    NLI_ENTAILMENT_FLOOR: float = 0.50
+    NLI_CONTRADICTION_THRESHOLD: float = 0.55
     REQUIRE_CITATIONS: bool = True
     OUTPUT_SAFETY_ENABLED: bool = True
     INSUFFICIENT_EVIDENCE_MESSAGE: str = (
@@ -188,6 +205,15 @@ class Settings(BaseSettings):
     @property
     def PII_ENTITIES(self) -> set[str]:
         return {e.upper() for e in _split_csv(self.PII_ENTITIES_RAW)}
+
+    # ------------------------------------------------------------------
+    # Evaluation
+    # ------------------------------------------------------------------
+    # Answer relevance asks "does this answer address the question that was
+    # asked?" -- independent of whether it is grounded or correct. It is an
+    # evaluation metric, not a runtime guardrail: nothing is blocked on it.
+    ANSWER_RELEVANCE_ENABLED: bool = True
+    ANSWER_RELEVANCE_MIN_SCORE: float = 0.50
 
     # ------------------------------------------------------------------
     # Rate limiting
@@ -217,6 +243,9 @@ class Settings(BaseSettings):
         "GROUNDING_MIN_SCORE",
         "CONTEXT_INJECTION_QUARANTINE_THRESHOLD",
         "CONTEXT_INJECTION_NEUTRALISE_THRESHOLD",
+        "NLI_ENTAILMENT_FLOOR",
+        "NLI_CONTRADICTION_THRESHOLD",
+        "ANSWER_RELEVANCE_MIN_SCORE",
     )
     @classmethod
     def _validate_unit_interval(cls, v: float) -> float:
