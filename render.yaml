@@ -34,8 +34,14 @@ services:
       - key: JWT_SECRET_KEY
         generateValue: true
 
+      # NOT "production", and the distinction is enforced rather than
+      # cosmetic: app.main refuses to boot when ENVIRONMENT=production while
+      # LLM_PROVIDER=echo or EMBEDDING_PROVIDER=hashing, so that nobody serves
+      # real users from the deterministic stand-ins. This blueprint runs on
+      # exactly those stand-ins, so it is staging by definition. Move to
+      # production only together with real provider credentials below.
       - key: ENVIRONMENT
-        value: production
+        value: staging
       - key: LOG_FORMAT
         value: json
 
