@@ -237,6 +237,23 @@ class Settings(BaseSettings):
     # request through unchecked.  See SECURITY PRINCIPLE 7 in docs/security.md.
     FAIL_CLOSED: bool = True
 
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _normalise_database_url(cls, v: str) -> str:
+        """Accept the ``postgres://`` URLs managed hosts hand out.
+
+        Render, Railway, Heroku and Fly all inject ``postgres://...``.
+        SQLAlchemy 2.x removed that alias, so the app would die at startup with
+        an opaque "Can't load plugin: sqlalchemy.dialects:postgres" -- a
+        deployment failure with no obvious cause, on the one code path that is
+        hardest to debug remotely. Normalising here costs nothing and keeps the
+        driver choice (psycopg 3) explicit in one place.
+        """
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+psycopg://" + v[len(prefix) :]
+        return v
+
     @field_validator(
         "INJECTION_BLOCK_THRESHOLD",
         "INJECTION_FLAG_THRESHOLD",

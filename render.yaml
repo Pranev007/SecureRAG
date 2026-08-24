@@ -1,0 +1,78 @@
+# Render blueprint for the SecureRAG backend and its database.
+#
+# The frontend is NOT here -- it is a static Vite build and belongs on Vercel
+# (see docs/deployment.md). This file covers the half that needs a persistent
+# filesystem, a connection pool and a long-running process, which is exactly
+# the half that does not fit a serverless platform.
+#
+# Deploy: Render dashboard -> New -> Blueprint -> point at this repo.
+
+services:
+  - type: web
+    name: securerag-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health/ready
+    autoDeployTrigger: commit
+
+    # Uploaded documents must outlive a deploy. Without this the ingest path
+    # silently loses files on every restart -- the failure that rules Vercel
+    # out for this service in the first place.
+    disk:
+      name: securerag-storage
+      mountPath: /data/storage
+      sizeGB: 1
+
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: securerag-db
+          property: connectionString
+
+      # Generated once by Render and held thereafter. Tokens must survive a
+      # restart, and a secret in this file would be a secret in git.
+      - key: JWT_SECRET_KEY
+        generateValue: true
+
+      - key: ENVIRONMENT
+        value: production
+      - key: STORAGE_DIR
+        value: /data/storage
+      - key: LOG_FORMAT
+        value: json
+
+      # Set this to the Vercel URL once the frontend is deployed. It is the
+      # only value that must be edited by hand, and the browser will refuse
+      # every API call until it matches the real origin.
+      - key: CORS_ORIGINS
+        sync: false
+
+      # Offline defaults. The security layers are deterministic server-side
+      # code and behave identically with or without a model -- measured across
+      # four provider configurations in docs/evaluation.md -- so the Playground
+      # and Dashboard are fully functional like this. Set LLM_PROVIDER=openai
+      # with a key (OpenAI, Groq, Together, OpenRouter) for real answers.
+      - key: LLM_PROVIDER
+        value: echo
+      - key: EMBEDDING_PROVIDER
+        value: hashing
+      - key: EMBEDDING_DIMENSIONS
+        value: "384"
+
+      # Lexical grounding only. nli/hybrid needs ~2 GB of torch plus a 750 MB
+      # checkpoint, which does not fit the free plan.
+      - key: GROUNDING_METHOD
+        value: lexical
+
+      # A public demo is a rate-limiting problem, not a capacity one.
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "20"
+      - key: RATE_LIMIT_UPLOAD_PER_MINUTE
+        value: "5"
+
+databases:
+  - name: securerag-db
+    plan: free
+    postgresMajorVersion: "16"

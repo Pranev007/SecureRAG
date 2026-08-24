@@ -45,4 +45,7 @@ EXPOSE 8000
 # Migrations run at start rather than in the image build: the database does not
 # exist at build time, and running them here means a fresh volume is always
 # brought to the current schema before the app accepts traffic.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"]
+#
+# $PORT is honoured because managed hosts (Render, Railway, Fly) assign one and
+# route to it; the default keeps docker-compose and local runs on 8000.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers"]

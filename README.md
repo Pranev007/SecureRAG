@@ -685,6 +685,7 @@ Stated plainly, because a security project that claims completeness is not one:
 | **[docs/architecture.md](docs/architecture.md)** | Why pgvector, why hybrid, why this chunking, data model, trade-offs |
 | **[docs/security.md](docs/security.md)** | Threat model, all four layers, the ten principles, honest limits |
 | **[docs/evaluation.md](docs/evaluation.md)** | Methodology, metric definitions, results, **what the suite found** |
+| **[docs/deployment.md](docs/deployment.md)** | Hosting: why the backend cannot go on Vercel, and where each half goes |
 
 ## License
 
