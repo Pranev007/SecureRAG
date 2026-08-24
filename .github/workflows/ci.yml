@@ -72,6 +72,63 @@ jobs:
           path: evaluation/reports/latest.md
           if-no-files-found: ignore
 
+  # The main job installs requirements-dev.txt only, so the NLI tests skip
+  # there -- deliberately, since torch is ~2 GB and most changes cannot affect
+  # it. But a green tick that silently skipped a guardrail's tests is exactly
+  # what the PostgreSQL step above exists to prevent, so the same rule applies:
+  # run them somewhere, and assert they really ran.
+  nli:
+    name: Backend · NLI grounding (optional dependency)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements-dev.txt
+            backend/requirements-optional.txt
+
+      # ~750 MB of weights. Cached on the model name so a checkpoint change
+      # busts it rather than silently testing the old one.
+      - name: Cache the NLI checkpoint
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-cross-encoder-nli-deberta-v3-base
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-dev.txt
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install sentence-transformers sentencepiece
+
+      - name: Warm the checkpoint
+        run: |
+          python -c "from sentence_transformers import CrossEncoder;             CrossEncoder('cross-encoder/nli-deberta-v3-base', max_length=384)"
+
+      - name: NLI tests
+        run: pytest -m requires_nli -q
+
+      - name: Confirm they actually ran
+        # `-m requires_nli` passes vacuously if every test skipped, which is
+        # the failure this whole job exists to catch.
+        run: |
+          count=$(pytest -m requires_nli --collect-only -q 2>/dev/null                   | grep -oE ': [0-9]+$' | grep -oE '[0-9]+'                   | awk '{s+=$1} END {print s+0}')
+          echo "collected $count NLI tests"
+          test "$count" -gt 0
+          pytest -m requires_nli -q -rs 2>&1 | tee /tmp/nli.txt
+          if grep -q SKIPPED /tmp/nli.txt; then
+            echo "::error::NLI tests skipped -- the checkpoint did not load"
+            exit 1
+          fi
+
   frontend:
     name: Frontend · typecheck and build
     runs-on: ubuntu-latest
