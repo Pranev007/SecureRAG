@@ -1,9 +1,11 @@
 # Render blueprint for the SecureRAG backend and its database.
 #
 # The frontend is NOT here -- it is a static Vite build and belongs on Vercel
-# (see docs/deployment.md). This file covers the half that needs a persistent
-# filesystem, a connection pool and a long-running process, which is exactly
-# the half that does not fit a serverless platform.
+# (see docs/deployment.md). This file covers the half that needs a connection
+# pool, a long-running process and a place to run migrations.
+#
+# The service is stateless apart from Postgres, so it needs no volume and can
+# be moved to any host that runs a container.
 #
 # Deploy: Render dashboard -> New -> Blueprint -> point at this repo.
 
@@ -17,13 +19,9 @@ services:
     healthCheckPath: /health/ready
     autoDeployTrigger: commit
 
-    # Uploaded documents must outlive a deploy. Without this the ingest path
-    # silently loses files on every restart -- the failure that rules Vercel
-    # out for this service in the first place.
-    disk:
-      name: securerag-storage
-      mountPath: /data/storage
-      sizeGB: 1
+    # No disk. Ingestion parses uploads in memory and stores chunks and
+    # embeddings in Postgres -- the original bytes are never written to disk
+    # and never read back, so the only durable state is the database.
 
     envVars:
       - key: DATABASE_URL
@@ -38,8 +36,6 @@ services:
 
       - key: ENVIRONMENT
         value: production
-      - key: STORAGE_DIR
-        value: /data/storage
       - key: LOG_FORMAT
         value: json
 

@@ -5,20 +5,25 @@ preference.
 
 ## Why the backend is not on Vercel
 
-Vercel runs Python as serverless functions. Four things this application does
-are incompatible with that model, and none of them are worked around by
-configuration:
+Vercel runs Python as serverless functions, and four things about this
+application sit badly against that model:
 
 | What the backend does | On serverless |
 |---|---|
-| Persists uploaded documents under `STORAGE_DIR` | `/tmp` only, discarded between invocations — upload succeeds, retrieval later finds nothing |
-| Holds a SQLAlchemy connection pool | One pool *per function instance*; a burst exhausts the database's connection limit |
-| Rate-limits in process | Each instance keeps its own counter, so the limit is multiplied by the instance count — the [documented per-process limitation](security.md#rate-limiting) becomes total |
-| Runs `alembic upgrade head` at start | No startup hook; migrations would need a separate mechanism |
+| Holds a SQLAlchemy connection pool | One pool *per function instance*; a burst exhausts the database's connection limit unless a pooler sits in front |
+| Rate-limits in process | Each instance keeps its own counter, so the effective limit multiplies by the instance count — the [documented per-process limitation](security.md#rate-limiting) becomes total |
+| Runs `alembic upgrade head` at start | No startup hook; migrations need a separate mechanism |
+| Would run `GROUNDING_METHOD=hybrid` | ~2 GB of torch, far past the bundle limit |
 
-A single request also spans retrieval, generation and five guardrail stages,
-which sits badly against a function duration cap. And `GROUNDING_METHOD=hybrid`
-pulls ~2 GB of torch, far past the bundle limit.
+A request spanning retrieval, generation and five guardrail stages also sits
+badly against a function duration cap once a real LLM is configured.
+
+**None of these are individually fatal**, and it is worth being straight about
+that: with a connection pooler, migrations run out-of-band and the `echo`
+provider, a Vercel deployment of this backend would probably work. What it
+would not do is behave like the system the rest of this repository describes —
+rate limiting in particular stops being a control at all. The recommendation
+here is a judgement about fidelity, not a hard incompatibility.
 
 The frontend has none of these properties. It is a Vite build — static files —
 which is precisely what Vercel is good at.
@@ -52,15 +57,70 @@ tiers such as Groq.
 
 ---
 
+## Choosing a host
+
+Because the service is stateless apart from Postgres, the only hard
+requirements are: **runs a container**, **long-lived process** (for the
+connection pool and the startup migration), and **a Postgres with pgvector**.
+That is a low bar, and it means compute and database can be chosen separately.
+
+Free tiers move constantly and several shrank during 2025-26 — Fly.io ended its
+free allowance for new accounts, Railway became a $5 trial credit, and Koyeb's
+free compute status is reported inconsistently. **Verify current terms before
+committing**; the notes below were accurate as of August 2026.
+
+### Compute
+
+| | Free? | Cold start | Notes |
+|---|---|---|---|
+| **Render** | Yes, indefinitely | **~50 s** | Most accessible; no card. The sleep is the one real drawback |
+| **Google Cloud Run** | Generous free tier | ~1-5 s | Card required. Scales to zero but wakes fast — the best answer to Render's sleep |
+| **Oracle Cloud Free Tier** | Yes, "always free" | None (always on) | 4 ARM cores / 24 GB RAM — far more machine than this needs. You administer the VM yourself, and signup can be awkward |
+| **Fly.io** | No longer, for new accounts | ~1-3 s | ~$2/mo shared-CPU. Worth it if the cold start matters |
+| **Railway** | $5 trial credit | Low | Best DX; not really free past the credit |
+
+### Database — this is the choice that matters more
+
+For a portfolio demo the failure mode is not slowness, it is **the database
+disappearing between the day you deploy and the day someone opens the link**.
+
+| | Free storage | pgvector | Idle behaviour |
+|---|---|---|---|
+| **Neon** | 0.5 GB/project | Yes | Scales to zero, **resumes instantly** |
+| **Supabase** | 500 MB | Yes | **Pauses after ~1 week idle** — needs manual resume |
+| **Render Postgres** | Yes | Yes | Free instances expire; check the current retention policy |
+
+**Recommendation: Render for compute, Neon for Postgres.** Render is the least
+friction for the container, and Neon removes the expiry risk that makes a
+free-tier demo quietly die. Neon can also be provisioned from the Vercel
+marketplace, so the whole stack stays across two dashboards.
+
+To use Neon instead of Render's database, delete the `databases:` block from
+[`render.yaml`](../render.yaml) and set `DATABASE_URL` to the Neon connection
+string — the `postgres://` form is normalised at startup, and the **pooled**
+endpoint is the right one given each instance holds a SQLAlchemy pool.
+
+If the ~50 s wake is unacceptable for a link on a CV, **Cloud Run** is the
+upgrade: same container, same `Dockerfile`, cold start in seconds. It needs a
+card even when the usage is free.
+
+---
+
 ## 1. Backend and database (Render)
 
 ```
 Render dashboard -> New -> Blueprint -> select this repository
 ```
 
-[`render.yaml`](../render.yaml) provisions the web service, a 1 GB persistent
-disk for uploads, and a PostgreSQL 16 instance, and generates `JWT_SECRET_KEY`
-itself so no secret lands in git.
+[`render.yaml`](../render.yaml) provisions the web service and a PostgreSQL 16
+instance, and generates `JWT_SECRET_KEY` itself so no secret lands in git.
+
+**No volume is needed.** Ingestion parses an upload in memory and writes chunks
+and embeddings to the database; the original bytes are never written to disk
+and never read back. `storage_path` exists on the model but is never populated.
+That makes the service stateless apart from Postgres, so it moves to any host
+that runs a container -- and it is why the disk-persistence argument you might
+expect against serverless does not actually apply here.
 
 **Check pgvector before relying on it.** Migration `0001` runs
 `CREATE EXTENSION IF NOT EXISTS vector` and the schema uses a native
@@ -140,8 +200,9 @@ Register your own account first. Then decide:
   link will see a hang. Consider a paid instance, or say so on the page.
 - **Render free Postgres expires.** Check the current retention policy; the
   database is deleted when it lapses, taking the demo with it.
-- **The 1 GB disk is not backed up.** It holds demo uploads, which are
-  reproducible with `scripts/seed_demo.py`.
+- **Nothing on the container is worth keeping.** The service is stateless; the
+  database holds everything, and the demo corpus is reproducible with
+  `scripts/seed_demo.py`.
 
 ## Verifying a deployment
 
