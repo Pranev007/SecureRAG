@@ -318,6 +318,12 @@ was actually sent:
 
 Plus a **polarity check**: high vocabulary overlap with opposite polarity is
 the signature of a fluent contradiction, which pure overlap scoring *rewards*.
+The comparison is **clause to clause on both sides**, not sentence to sentence.
+A source sentence can assert one thing and deny another — *"granted at 12 days
+per calendar year **and does not carry forward**"* — and comparing whole spans
+made a correct concise answer look negation-mismatched and blocked it. That was
+a live false-refusal until a real model surfaced it; see
+[evaluation.md, finding 7](evaluation.md).
 
 Hedges are exempt — *"I could not find this in your documents"* is correct
 behaviour, not an unsupported claim. And a single fabricated sentence in an
@@ -328,12 +334,51 @@ Measured behaviour (from the test suite):
 
 | Answer | Score | Outcome |
 |---|---|---|
-| Supported paraphrase | 0.86 | pass |
+| Supported paraphrase | 0.80 | pass |
 | Explicit refusal | 1.00 | pass (asserts nothing) |
-| Wrong number (30 vs 24 days) | 0.22 | **blocked** |
+| Wrong number (30 vs 24 days) | 0.20 | **blocked** |
 | Fabricated benefit | 0.20 | **blocked** |
-| Contradiction ("may **not** carry forward") | 0.16 | **blocked** + flagged |
+| Contradiction ("may **not** carry forward") | 0.19 | **blocked** + flagged |
 | One good claim + one fabricated | 0.41 | **blocked** |
+
+#### Optional NLI verification
+
+`GROUNDING_METHOD=nli|hybrid` adds a cross-encoder entailment model
+([`nli.py`](../backend/app/security/output/nli.py)) that reads each
+(premise, claim) pair jointly and returns a distribution over
+*entailment / neutral / contradiction*. It addresses the two failures lexical
+scoring cannot fix from inside: heavy paraphrase, and fluent contradiction
+beyond what the polarity heuristic catches.
+
+It does **not** replace the lexical signal, and the reason was measured rather
+than assumed. Against 13 fabricated figures
+([`test_nli_numeric_behaviour.py`](../backend/tests/security/test_nli_numeric_behaviour.py))
+the cross-encoder caught **12** — off-by-one, transposed digits, unit swaps and
+order-of-magnitude errors alike. That is far better than the folklore about NLI
+and numbers. But the one it missed, it *entailed at p=0.94*: `23 days` against a
+source saying `24`. A confidently-served wrong figure is the most damaging
+hallucination in document QA, and the lexical check costs nothing on the twelve
+that were already caught — so it stays as a backstop. The two signals are
+combined by letting each veto only where it is trustworthy:
+
+| Decision | Authority | Why |
+|---|---|---|
+| Does a number check out? | **Lexical only** | Cheap backstop for the case where the model is confidently wrong; the cap applies whatever it says |
+| Is the claim supported? | Either signal (`hybrid`) | Overlap proves reuse, entailment proves it follows; either is sufficient |
+| Is the claim contradicted? | Either signal | The polarity check and the model catch different phrasings |
+
+Premise selection matters more than the model does: the whole context as one
+premise degrades accuracy and blows up sequence length, while single sentences
+lose claims supported across a boundary. Candidates are therefore built at both
+granularities, shortlisted lexically (cheap, high-recall *ranker* even though it
+is a poor *judge*), and the cross-encoder decides among the shortlist.
+
+**It is opt-in and degrades openly.** The dependency is heavy
+(`sentence-transformers`, ~2 GB of torch, plus a ~750 MB checkpoint) and adds
+hundreds of milliseconds per answer on CPU. When it is absent or fails to load,
+grounding falls back to lexical scoring and records that in the report's
+`method` field. A guardrail that silently changed strength depending on what
+happened to be installed would make every measured number unattributable.
 
 ### Citation verification
 
@@ -494,14 +539,22 @@ security-event table.
    detection fails*.
 
 2. **Grounding measures support, not relevance.** A verbatim-but-irrelevant
-   quotation scores perfectly. Answer relevance is a separate property and is
-   not currently checked. *(This was found by the evaluation suite — see
-   [evaluation.md](evaluation.md).)*
+   quotation scores perfectly — grounding verification catches *fabrication*,
+   not *irrelevance*, because those are different properties. *(This was found
+   by the evaluation suite — see [evaluation.md](evaluation.md).)* Answer
+   relevance is now **measured** as an evaluation metric, but it is deliberately
+   **not** a runtime guardrail: nothing is blocked on it. Refusing on a
+   deterministic relevance score would add false refusals without adding
+   security, since an irrelevant answer is a quality failure rather than a
+   safety one.
 
-3. **Grounding is lexical, not entailment.** It will miss a fluent
-   contradiction that reuses the source's vocabulary beyond the polarity check,
-   and will penalise a correct answer that paraphrases heavily. A cross-encoder
-   NLI model is the documented upgrade.
+3. **Grounding is lexical by default.** In the default `lexical` mode it will
+   miss a fluent contradiction that reuses the source's vocabulary beyond the
+   polarity check, and will penalise a correct answer that paraphrases heavily.
+   `GROUNDING_METHOD=nli|hybrid` addresses both, at the cost of a heavy optional
+   dependency — and NLI brings its own weakness on numbers, which is why the
+   lexical numeric gate stays authoritative in every mode. Neither mode is an
+   entailment *proof*: both are filters against fabrication.
 
 4. **PII detection misses names and addresses.** See above.
 

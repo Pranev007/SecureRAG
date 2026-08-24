@@ -57,7 +57,7 @@ flowchart TB
         S1["1 · Schema validation"]
         S1 --> S2["2 · Citation resolution<br/>index → document"]
         S2 --> S3["3 · Safety<br/>prompt leak · exfiltration"]
-        S3 --> S4["4 · Grounding<br/>claim-level support"]
+        S3 --> S4["4 · Grounding<br/>claim-level support<br/><i>lexical | NLI</i>"]
         S4 --> S5["5 · PII<br/>regex + checksum"]
     end
 
