@@ -63,6 +63,13 @@ _NUMBER = re.compile(r"\b\d+(?:[.,]\d+)?%?\b")
 # check treat the citation index as an unsupported number -- penalising every
 # correctly-cited answer for doing the right thing.
 _CITATION_MARKER = re.compile(r"\[\d{1,3}\]")
+# Where one clause ends and the next begins, for the polarity check. Only
+# coordinating boundaries: a subordinate clause ("leave that does not carry
+# forward") qualifies the same assertion and must stay attached to it.
+_CLAUSE_BOUNDARY = re.compile(
+    r"(?:\s*;\s*)|(?:,?\s+(?:and|but|however|whereas|although|though|while)\s+)",
+    re.IGNORECASE,
+)
 _NEGATION = re.compile(
     r"\b(?:not|never|no|cannot|can't|won't|shall\s+not|must\s+not|may\s+not|"
     r"is\s+not|are\s+not|does\s+not|do\s+not|without|excluded|prohibited|"
@@ -178,17 +185,9 @@ def score_claim(sentence: str, context: str, context_tokens: set[str]) -> ClaimS
     # Polarity check: high vocabulary overlap with the opposite polarity is the
     # signature of a fluent contradiction, which pure overlap scoring rewards.
     contradicts = False
-    if overlap > 0.6:
-        claim_negated = bool(_NEGATION.search(sentence))
-        # Compare against the best-matching context sentence, not the whole
-        # context, which almost always contains a negation somewhere.
-        best_sentence = _best_matching_sentence(claim_tokens, context)
-        context_negated = (
-            bool(_NEGATION.search(best_sentence)) if best_sentence else False
-        )
-        if claim_negated != context_negated:
-            contradicts = True
-            score *= 0.4
+    if overlap > 0.6 and not _polarity_is_corroborated(sentence, context):
+        contradicts = True
+        score *= 0.4
 
     if numeric_mismatch:
         score = min(score, 0.5)
@@ -203,18 +202,77 @@ def score_claim(sentence: str, context: str, context_tokens: set[str]) -> ClaimS
     )
 
 
-def _best_matching_sentence(claim_tokens: list[str], context: str) -> str:
-    claim_set = set(claim_tokens)
-    best = ""
-    best_score = 0.0
+def _clauses(context: str) -> list[str]:
+    """Split the context into clauses for polarity comparison.
+
+    Polarity is a property of a clause, not of the sentence containing it: a
+    sentence can assert one thing and deny another in the same breath.
+    """
+    parts: list[str] = []
     for sentence in split_sentences(context):
-        tokens = set(tokenize(sentence))
-        if not tokens:
+        parts.extend(p for p in _CLAUSE_BOUNDARY.split(sentence) if p and p.strip())
+    return parts
+
+
+# A clause counts as comparable evidence if its overlap is within this fraction
+# of the best clause's. Both bounds matter: the ratio keeps a weakly-related
+# clause from vetoing a strong match, and the floor keeps an incidental
+# one-word overlap from counting as corroboration at all.
+_COMPARABLE_CLAUSE_RATIO = 0.75
+_COMPARABLE_CLAUSE_FLOOR = 0.30
+
+
+def _polarity_is_corroborated(claim: str, context: str) -> bool:
+    """Is every assertion in ``claim`` matched in polarity by the source?
+
+    Comparison is **clause to clause on both sides**, and each of the three
+    cheaper designs failed on a real answer:
+
+    * *whole claim vs whole sentence* (the original): a source reading "granted
+      at 12 days per calendar year **and does not carry forward**" made the
+      correct concise answer "12 days per calendar year" look negation-mismatched
+      and blocked it. Only a real model hits this -- the offline stub copies
+      whole sentences, negated clause included, so its polarity always matched.
+    * *whole claim vs best clause*: a correct **negated** answer ("sick leave
+      does not carry forward") lost a near-tie to the affirmative clause beside
+      it and was flagged instead.
+    * *whole claim vs comparable clauses*: an answer quoting **both** clauses of
+      a mixed-polarity sentence reads as negated overall, while the clause that
+      dominates the token overlap is affirmative -- so nothing corroborated it.
+
+    All three are the same error: treating a span with mixed polarity as though
+    it had one. Splitting both sides removes the mismatch at its source. A claim
+    contradicts only when one of its own clauses asserts something no
+    comparably-supporting context clause agrees with.
+    """
+    context_clauses = [
+        (set(tokenize(clause)), bool(_NEGATION.search(clause)))
+        for clause in _clauses(context)
+    ]
+    context_clauses = [entry for entry in context_clauses if entry[0]]
+    if not context_clauses:
+        # Nothing to compare against, so there is nothing to contradict. The
+        # overlap and n-gram signals already scored this claim on its merits.
+        return True
+
+    for claim_clause in _clauses(claim):
+        claim_set = set(tokenize(claim_clause))
+        if not claim_set:
             continue
-        score = len(claim_set & tokens) / len(claim_set)
-        if score > best_score:
-            best_score, best = score, sentence
-    return best
+        claim_negated = bool(_NEGATION.search(claim_clause))
+
+        scored = [
+            (len(claim_set & tokens) / len(claim_set), negated)
+            for tokens, negated in context_clauses
+        ]
+        best = max(score for score, _ in scored)
+        threshold = max(best * _COMPARABLE_CLAUSE_RATIO, _COMPARABLE_CLAUSE_FLOOR)
+        if not any(
+            negated == claim_negated for score, negated in scored if score >= threshold
+        ):
+            return False
+
+    return True
 
 
 def verify_grounding(answer: str, chunks: list[ScoredChunk]) -> GroundingReport:

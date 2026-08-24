@@ -549,3 +549,77 @@ def test_output_metadata_is_audit_safe(db, user):
     assert meta["grounding"]["score"] > 0
     assert meta["citations"]["resolved"] == 1
     assert "accrue two days of paid annual leave" not in str(meta)
+
+
+# ======================================================================
+# Polarity: clause-level corroboration
+#
+# These are regressions. The polarity check originally compared the claim
+# against the best-matching context *sentence*, which produced false
+# contradictions in both directions. Found by running a real model: see
+# docs/evaluation.md, finding 8.
+# ======================================================================
+
+_MIXED_POLARITY = (
+    "Sick leave is granted separately at 12 days per calendar year and does "
+    "not carry forward. Unused annual leave may be carried forward to the "
+    "next calendar year up to a maximum of 10 days."
+)
+
+
+def test_a_concise_answer_is_not_contradicted_by_an_unrelated_negated_clause():
+    """The ans-09 false refusal.
+
+    The source sentence asserts a figure and denies something else. A correct
+    concise answer quoting only the assertion must not inherit the denial's
+    polarity. The offline stub never exposed this because it copies whole
+    sentences, negated clause included.
+    """
+    report = verify_grounding("12 days per calendar year", [_chunk(_MIXED_POLARITY)])
+
+    assert not report.claims[0].contradicts
+    assert report.score >= 0.45
+
+
+def test_a_correct_negated_answer_is_not_contradicted_either():
+    """The mirror image, and the reason the rule is not simply clause-level.
+
+    "Sick leave does not carry forward" *is* what the source says. Comparing
+    against a single best-matching clause let the affirmative clause beside it
+    win a tie and flag this correct answer.
+    """
+    report = verify_grounding(
+        "Sick leave does not carry forward.", [_chunk(_MIXED_POLARITY)]
+    )
+
+    assert not report.claims[0].contradicts
+    assert report.score >= 0.45
+
+
+def test_a_claim_quoting_both_clauses_is_not_contradicted():
+    """The variant that broke the first two attempts at this fix.
+
+    An answer quoting a whole mixed-polarity sentence reads as negated overall,
+    while the clause carrying most of its vocabulary is affirmative. Comparing
+    the claim as a unit found nothing to corroborate it. Both sides have to be
+    split for the comparison to mean anything.
+    """
+    report = verify_grounding(
+        "Sick leave is granted separately at 12 days per calendar year and does "
+        "not carry forward.",
+        [_chunk(_MIXED_POLARITY)],
+    )
+
+    assert not report.claims[0].contradicts
+    assert report.score >= 0.45
+
+
+def test_a_genuine_polarity_flip_is_still_caught():
+    """The check must still do the job it exists for."""
+    report = verify_grounding(
+        "Unused annual leave may not be carried forward to the next calendar year.",
+        [_chunk(_MIXED_POLARITY)],
+    )
+
+    assert report.claims[0].contradicts
+    assert report.score < 0.45
