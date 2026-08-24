@@ -27,10 +27,18 @@ backend/securerag.db
 # does not belong in version control, but `latest.*` IS committed: the README
 # and docs link to it, and a reviewer should be able to read the measured
 # results without installing anything first.
+# Timestamped runs are local noise; the "latest" of each configuration is
+# tracked, because docs/evaluation.md quotes numbers from them and a reader
+# has to be able to check them.
 evaluation/reports/*
 !evaluation/reports/.gitkeep
 !evaluation/reports/latest.md
 !evaluation/reports/latest.json
+!evaluation/reports/nli/
+!evaluation/reports/ollama/
+!evaluation/reports/ollama-nli/
+evaluation/reports/*/evaluation-*
+
 
 # Node
 node_modules/
