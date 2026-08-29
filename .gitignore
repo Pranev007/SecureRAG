@@ -11,8 +11,12 @@ venv/
 htmlcov/
 
 # Environment / secrets
-.env
-.env.local
+# Deliberately a wildcard with one exception rather than a list of known
+# names. `.env.backup.<timestamp>` sat untracked and unignored here for days,
+# one `git add .` away from a commit; a rule that has to be extended for every
+# new suffix is a rule that is always one suffix behind.
+.env*
+!.env.example
 *.pem
 *.key
 

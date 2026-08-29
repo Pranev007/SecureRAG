@@ -1,0 +1,11 @@
+# Shell scripts keep LF endings on every platform.
+#
+# `core.autocrlf` is true on a default Windows install, so without this rule
+# git rewrites `.githooks/pre-commit` to CRLF on checkout. The kernel then
+# reads the shebang as an interpreter literally named `/bin/sh\r`, which does
+# not exist. That matters more than the usual line-ending pedantry: a
+# pre-commit hook that stops running does not announce itself, so the failure
+# mode is a repository that silently loses its guard against committing a
+# credential -- which is the exact accident the hook was written for.
+*.sh text eol=lf
+.githooks/** text eol=lf

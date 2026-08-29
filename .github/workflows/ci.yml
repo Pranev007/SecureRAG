@@ -44,6 +44,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      # Before anything else. A leaked credential is the one CI finding where
+      # the fix is "revoke it", not "push a patch", so it should surface in
+      # seconds rather than after the test matrix.
+      - name: Scan for committed credentials
+        working-directory: .
+        run: python scripts/scan_secrets.py --all-tracked
+
       - name: Lint
         run: |
           ruff check .

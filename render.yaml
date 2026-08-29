@@ -77,7 +77,6 @@ services:
       # blueprint neither carries the value nor overwrites what you set.
       - key: LLM_API_KEY
         sync: false
-
       # Embeddings stay offline deliberately. The vector column is sized from
       # EMBEDDING_DIMENSIONS at migration time, so changing the embedder means
       # a fresh database and re-uploading every document -- a much bigger move
