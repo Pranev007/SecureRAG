@@ -67,12 +67,18 @@ services:
       # are fully functional without a key.
       - key: LLM_PROVIDER
         value: openai
+      # Gemini through its OpenAI-compatibility layer. The provider stays
+      # `openai` because OpenAICompatibleProvider speaks this protocol already;
+      # only the host and the model name change. No trailing slash -- the code
+      # rstrips it, but the two spellings should not diverge across the file.
       - key: LLM_BASE_URL
-        value: https://api.groq.com/openai/v1
-      # Check https://console.groq.com/docs/models before changing this --
-      # Groq retires model names, and a stale one is a 404 on every request.
+        value: https://generativelanguage.googleapis.com/v1beta/openai
+      # Check https://ai.google.dev/gemini-api/docs/models before changing this.
+      # The base URL and the model name must move together: a Gemini key sent to
+      # Groq is a 401, and a Groq model name sent to Gemini is a 404. Both look
+      # identical from outside -- only the httpx log line names the endpoint.
       - key: LLM_MODEL
-        value: llama-3.3-70b-versatile
+        value: gemini-3.7-flash
       # Never in git. Set this in the Render dashboard; `sync: false` means the
       # blueprint neither carries the value nor overwrites what you set.
       - key: LLM_API_KEY
