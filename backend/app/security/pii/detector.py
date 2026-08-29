@@ -245,10 +245,5 @@ def get_pii_detector():
     return _detector
 
 
-def reset_pii_detector() -> None:
-    global _detector
-    _detector = None
-
-
 def scan_pii(text: str, *, enabled_types: set[str] | None = None) -> PIIReport:
     return get_pii_detector().detect(text, enabled_types=enabled_types)

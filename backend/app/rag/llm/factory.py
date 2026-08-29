@@ -30,8 +30,3 @@ def get_llm_provider(provider: str | None = None) -> LLMProvider:
         return OllamaProvider()
 
     raise ConfigurationError(internal_detail=f"unknown LLM_PROVIDER={name!r}")
-
-
-def reset_llm_provider_cache() -> None:
-    """Drop the cached provider (used by tests that switch configuration)."""
-    get_llm_provider.cache_clear()

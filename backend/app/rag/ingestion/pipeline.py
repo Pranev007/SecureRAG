@@ -55,13 +55,6 @@ class ChunkScanner(Protocol):
     def scan(self, text: str) -> ChunkScanResult: ...
 
 
-class NullChunkScanner:
-    """No-op scanner. Used only in tests that isolate the ingestion stages."""
-
-    def scan(self, text: str) -> ChunkScanResult:
-        return ChunkScanResult()
-
-
 @dataclass
 class IngestionResult:
     chunks: list[Chunk]

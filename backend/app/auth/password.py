@@ -13,9 +13,7 @@ is recorded in docs/security.md.
 
 from __future__ import annotations
 
-import hmac
 import re
-import secrets
 
 import bcrypt
 
@@ -74,14 +72,6 @@ def dummy_verify() -> None:
         b"timing-equalisation",
         bcrypt.hashpw(b"timing-equalisation", bcrypt.gensalt(rounds=4)),
     )
-
-
-def constant_time_equals(a: str, b: str) -> bool:
-    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
-
-
-def generate_password(length: int = 20) -> str:
-    return secrets.token_urlsafe(length)
 
 
 _HAS_LETTER = re.compile(r"[A-Za-z]")

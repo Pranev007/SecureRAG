@@ -38,8 +38,3 @@ def get_embedding_provider(provider: str | None = None) -> EmbeddingProvider:
         return OllamaEmbeddingProvider()
 
     raise ConfigurationError(internal_detail=f"unknown EMBEDDING_PROVIDER={name!r}")
-
-
-def reset_embedding_provider_cache() -> None:
-    """Drop the cached provider (used by tests that switch configuration)."""
-    get_embedding_provider.cache_clear()

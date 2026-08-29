@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import contextmanager
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
@@ -53,19 +52,5 @@ def get_db() -> Iterator[Session]:
     db = SessionLocal()
     try:
         yield db
-    finally:
-        db.close()
-
-
-@contextmanager
-def session_scope() -> Iterator[Session]:
-    """Transactional session for scripts, workers and the evaluation runner."""
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
     finally:
         db.close()

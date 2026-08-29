@@ -11,7 +11,7 @@ campaign) while keeping the payload itself out of the database and the logs.
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -159,11 +159,3 @@ def query_events(
         .all()
     )
     return list(rows), int(total)
-
-
-def purge_expired_events(db: Session, retention_days: int) -> int:
-    """Delete events older than the retention window."""
-    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-    deleted = db.query(SecurityEvent).filter(SecurityEvent.created_at < cutoff).delete()
-    db.commit()
-    return int(deleted)

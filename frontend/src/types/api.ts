@@ -7,17 +7,6 @@
  * rather than the UI silently rendering `undefined`.
  */
 
-export interface ApiError {
-  error: {
-    code: string;
-    message: string;
-    request_id?: string | null;
-    blocked?: boolean;
-    reason?: string;
-    fields?: { field: string; message: string }[];
-  };
-}
-
 export interface User {
   id: string;
   email: string;

@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import uuid
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, field
-from typing import Any
 
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 _user_id: ContextVar[str | None] = ContextVar("user_id", default=None)
@@ -44,23 +42,3 @@ def reset_request_id(token: Token[str | None]) -> None:
 
 def reset_user_id(token: Token[str | None]) -> None:
     _user_id.reset(token)
-
-
-@dataclass
-class Timings:
-    """Collects stage latencies for a single request.
-
-    Recorded in milliseconds so that they can be surfaced directly in API
-    responses and the dashboard without further conversion.
-    """
-
-    stages: dict[str, float] = field(default_factory=dict)
-
-    def record(self, stage: str, milliseconds: float) -> None:
-        self.stages[stage] = round(milliseconds, 2)
-
-    def total(self) -> float:
-        return round(sum(self.stages.values()), 2)
-
-    def as_dict(self) -> dict[str, Any]:
-        return dict(self.stages)

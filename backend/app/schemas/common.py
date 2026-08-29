@@ -30,11 +30,5 @@ class ErrorDetail(BaseModel):
     reason: str | None = None
 
 
-class ErrorResponse(BaseModel):
-    """The single error envelope every failing endpoint returns."""
-
-    error: ErrorDetail
-
-
 class MessageResponse(BaseModel):
     message: str
