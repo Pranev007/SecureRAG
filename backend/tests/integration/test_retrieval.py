@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from app.core.exceptions import ProviderError
+from app.rag.pipeline import RagPipeline
 from app.rag.retrieval.fusion import reciprocal_rank_fusion
 from app.rag.retrieval.keyword import get_keyword_searcher, tokenize
 from app.rag.retrieval.retriever import Retriever
@@ -240,3 +242,42 @@ def test_keyword_only_and_vector_only_modes_both_work(db, user, corpus):
     assert keyword_only.vector_candidates == 0
     assert vector_only.chunks and vector_only.vector_candidates > 0
     assert vector_only.keyword_candidates == 0
+
+
+# ----------------------------------------------------------------------
+# What a refusal reports about retrieval
+# ----------------------------------------------------------------------
+
+
+def test_a_provider_failure_still_reports_what_retrieval_found(db, user, corpus):
+    """A failed generation must not be indistinguishable from a failed retrieval.
+
+    The provider-error branch used to build its response without the retrieval
+    fields, so every provider outage reported zero chunks. In the UI that is
+    identical to a genuine retrieval miss, and it was duly filed as a separate
+    bug and investigated as one -- twice -- before the stage timings gave it
+    away: `sanitise` cannot run on an empty retrieval, so its presence proved
+    chunks had been found all along.
+
+    `retrieved_documents` carries a field comment saying it exists so retrieval
+    stays measurable regardless of whether the answer was refused. This is that
+    promise under test.
+    """
+
+    class FailingGenerator:
+        def generate(self, question, chunks):
+            raise ProviderError(internal_detail="HTTP 401 from LLM provider")
+
+    pipeline = RagPipeline(generator=FailingGenerator())
+
+    response = pipeline.answer(
+        db, "How many days of annual leave do employees get?", user=user
+    )
+
+    assert response.refused
+    assert response.reason == "provider_unavailable"
+    # The point of the test.
+    assert response.retrieved_chunk_count > 0
+    assert "handbook.md" in response.retrieved_documents
+    # The stage timings that exposed the original bug must survive too.
+    assert "sanitise_ms" in response.timings_ms

@@ -230,6 +230,15 @@ class RagPipeline:
                 client_ref=client_ref,
                 detail={"error": exc.internal_detail[:200]},
             )
+            # Retrieval already succeeded here -- the provider is what failed --
+            # so the response must still report what was retrieved. Omitting
+            # these made every provider failure claim zero chunks, which reads
+            # as a retrieval bug: it was logged as a separate open item and cost
+            # two debugging sessions chasing a fault that did not exist. The
+            # timings gave it away in the end (`sanitise` cannot run on an empty
+            # retrieval), but a response should not need forensics to be
+            # believed. `retrieved_documents` exists precisely so retrieval
+            # stays measurable across a refusal -- see its field comment.
             return RagResponse(
                 answer=(
                     "The language model service is currently unavailable. "
@@ -237,9 +246,13 @@ class RagPipeline:
                 ),
                 refused=True,
                 reason="provider_unavailable",
+                risk_score=decision.risk_score,
                 warnings=warnings,
+                retrieved_chunk_count=len(chunks),
+                retrieved_documents=retrieved_documents,
                 request_id=get_request_id(),
                 timings_ms=timings,
+                meta={"retrieval_mode": retrieval.mode},
             )
 
         timings["llm_ms"] = generation.latency_ms
