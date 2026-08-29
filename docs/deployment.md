@@ -150,7 +150,8 @@ instance, and generates `JWT_SECRET_KEY` itself so no secret lands in git.
 
 **No volume is needed.** Ingestion parses an upload in memory and writes chunks
 and embeddings to the database; the original bytes are never written to disk
-and never read back. `storage_path` exists on the model but is never populated.
+and never read back. A `storage_path` column existed on the model for a store-
+the-original feature that was never built; migration `0002` drops it.
 That makes the service stateless apart from Postgres, so it moves to any host
 that runs a container -- and it is why the disk-persistence argument you might
 expect against serverless does not actually apply here.

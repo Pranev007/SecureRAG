@@ -111,7 +111,6 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Ingestion
     # ------------------------------------------------------------------
-    STORAGE_DIR: str = str(BACKEND_DIR / "storage")
     MAX_UPLOAD_SIZE_MB: int = 20
     ALLOWED_FILE_EXTENSIONS_RAW: str = Field(
         default="pdf,txt,md,markdown,docx", alias="ALLOWED_FILE_EXTENSIONS"
@@ -273,12 +272,6 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.DATABASE_URL.startswith("sqlite")
-
-    @property
-    def storage_path(self) -> Path:
-        path = Path(self.STORAGE_DIR)
-        path.mkdir(parents=True, exist_ok=True)
-        return path
 
 
 @lru_cache

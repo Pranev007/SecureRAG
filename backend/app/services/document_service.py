@@ -9,8 +9,6 @@ worker, is documented in docs/architecture.md.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -320,15 +318,6 @@ class DocumentService:
         self.db.execute(
             delete(DocumentChunk).where(DocumentChunk.document_id == document.id)
         )
-
-        if document.storage_path:
-            try:
-                Path(document.storage_path).unlink(missing_ok=True)
-            except OSError as exc:  # pragma: no cover - filesystem edge case
-                logger.warning(
-                    "stored_file_delete_failed",
-                    extra={"document_id": document.id, "error": type(exc).__name__},
-                )
 
         owner_id = document.owner_id
         self.db.delete(document)

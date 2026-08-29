@@ -24,7 +24,6 @@ os.environ.update(
     {
         "ENVIRONMENT": "test",
         "DATABASE_URL": f"sqlite:///{_DB_PATH.as_posix()}",
-        "STORAGE_DIR": str(_TMP_ROOT / "storage"),
         "JWT_SECRET_KEY": "test-secret-not-for-production",
         "LOG_FORMAT": "console",
         "LOG_LEVEL": "WARNING",

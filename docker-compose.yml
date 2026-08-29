@@ -63,9 +63,6 @@ services:
       PII_DETECTION_MODE: ${PII_DETECTION_MODE:-redact}
       GROUNDING_MODE: ${GROUNDING_MODE:-block}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-20}
-      STORAGE_DIR: /data/storage
-    volumes:
-      - backend-storage:/data/storage
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     healthcheck:
@@ -95,4 +92,3 @@ services:
 
 volumes:
   postgres-data:
-  backend-storage:

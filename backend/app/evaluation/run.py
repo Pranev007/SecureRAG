@@ -76,7 +76,6 @@ def main(argv: list[str] | None = None) -> int:
         temporary_dir = tempfile.TemporaryDirectory(prefix="securerag-eval-")
         database_path = Path(temporary_dir.name) / "evaluation.db"
         os.environ["DATABASE_URL"] = f"sqlite:///{database_path.as_posix()}"
-        os.environ.setdefault("STORAGE_DIR", str(Path(temporary_dir.name) / "storage"))
 
     os.environ.setdefault("LOG_LEVEL", "WARNING")
     os.environ.setdefault("LOG_FORMAT", "console")

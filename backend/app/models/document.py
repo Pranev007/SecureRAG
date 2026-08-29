@@ -63,7 +63,6 @@ class Document(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     content_type: Mapped[str] = mapped_column(String(128), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    storage_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
     status: Mapped[str] = mapped_column(
         String(32), default=DocumentStatus.PENDING.value, nullable=False, index=True
