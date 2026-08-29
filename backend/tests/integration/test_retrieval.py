@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from app.core.exceptions import ProviderError
@@ -266,6 +268,7 @@ def test_a_provider_failure_still_reports_what_retrieval_found(db, user, corpus)
 
     class FailingGenerator:
         def generate(self, question, chunks):
+            time.sleep(0.05)  # a provider failure is not instant; a hang least of all
             raise ProviderError(internal_detail="HTTP 401 from LLM provider")
 
     pipeline = RagPipeline(generator=FailingGenerator())
@@ -281,3 +284,8 @@ def test_a_provider_failure_still_reports_what_retrieval_found(db, user, corpus)
     assert "handbook.md" in response.retrieved_documents
     # The stage timings that exposed the original bug must survive too.
     assert "sanitise_ms" in response.timings_ms
+    # And the failed attempt must be counted. Recording llm_ms only on success
+    # meant a provider that hung for a minute reported a sub-second total --
+    # the number is least trustworthy exactly when it matters most.
+    assert response.timings_ms["llm_ms"] >= 50
+    assert response.total_latency_ms >= response.timings_ms["llm_ms"]

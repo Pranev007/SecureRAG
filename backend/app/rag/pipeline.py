@@ -216,9 +216,21 @@ class RagPipeline:
         # ---------------------------------------------------------------
         # 4. Generation
         # ---------------------------------------------------------------
+        generation_started = time.perf_counter()
         try:
             generation = self.generator.generate(question, chunks)
         except ProviderError as exc:
+            # Time the failed attempt too. `llm_ms` used to be recorded only on
+            # the success path, so a provider failure contributed nothing to the
+            # total and the response reported just the retrieval stages. A
+            # provider that hung for 46 seconds displayed as "945 ms total",
+            # which is precisely backwards: the number is least trustworthy in
+            # the situation where an operator most needs it, and it sent this
+            # investigation looking for a fast rejection when the truth was a
+            # timeout.
+            timings["llm_ms"] = round(
+                (time.perf_counter() - generation_started) * 1000, 2
+            )
             record_event(
                 db,
                 event_type=SecurityEventType.PROVIDER_ERROR,
