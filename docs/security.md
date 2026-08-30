@@ -593,4 +593,4 @@ pytest tests/integration/test_postgres_backends.py -v
 ```
 
 Or open the **Security Playground** in the UI and run the catalogue against the
-live detectors — nothing there is scripted.
+live detectors.
