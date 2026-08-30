@@ -529,7 +529,7 @@ security-event table.
 
 ---
 
-## Limitations — read this section
+## Limitations
 
 **Prompt injection is not solved, here or anywhere.**
 
